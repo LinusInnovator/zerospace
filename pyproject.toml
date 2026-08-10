@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hd-optimizer-detective"
+version = "2.0.0"
+authors = [
+  { name="HD Optimizer Detective Contributors" },
+]
+description = "Next-Gen macOS Storage Intelligence & Real-Time Hard Drive Optimizer"
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS :: MacOS X",
+]
+
+[project.scripts]
+hd-detective = "scanner_backend:main"
