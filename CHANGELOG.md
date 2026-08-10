@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- **Agent-ready read-only CLI**: `hd-detective scan PATH` supports human summaries, versioned JSON findings, and explicit `--fail-on` CI gates without starting the browser.
+- **Integration recipes**: shell-agent and GitHub Actions examples for pre-PR workspace hygiene.
+
 ## [2.0.0] - 2026-08-07
 
 ### 🌟 Added

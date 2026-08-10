@@ -77,6 +77,39 @@ Executes a permission-safe, exhaustive scan of all accessible files in the targe
 
 ---
 
+### Agent CLI JSON contract (`schemaVersion: 1`)
+
+`hd-detective scan <DIRECTORY> --json` performs the same read-only scan without starting the browser. It retains the API evidence fields and adds:
+
+```json
+{
+  "schemaVersion": 1,
+  "scope": { "requestedPath": ".", "resolvedPath": "/Users/example/project" },
+  "summary": {
+    "totalFiles": 45632,
+    "reviewStories": 3,
+    "duplicateGroups": 2,
+    "reclaimableBytes": 294110000,
+    "findingCount": 7
+  },
+  "findings": [
+    {
+      "path": "/Users/example/project/model.ckpt",
+      "sizeBytes": 294110000,
+      "category": "AI Models & Safetensors",
+      "confidence": 98,
+      "reasons": ["Intermediate AI model weights"],
+      "source": "story",
+      "recommendedAction": "trash"
+    }
+  ]
+}
+```
+
+Findings are deduplicated by canonical path. `source` is one of `topHog`, `story`, or `duplicate`; duplicate findings additionally include `duplicateGroup`. Exit codes are `0` for a completed scan, `1` for an explicitly requested `--fail-on` match, and `2` for validation, permission, or scan failures.
+
+---
+
 ### 2. `GET /api/system_hud`
 Queries live macOS kernel metrics via system calls.
 

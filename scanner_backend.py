@@ -1041,7 +1041,7 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
         free_disk_bytes = total_disk_bytes - used_disk_bytes
 
     audit_root = root_dir
-    print(f"🕵️ Exhaustive bounded-memory audit scanning: {audit_root}...")
+    print(f"🕵️ Exhaustive bounded-memory audit scanning: {audit_root}...", file=sys.stderr)
 
     database_fd, database_path = tempfile.mkstemp(prefix='zerospace-scan-', suffix='.sqlite3')
     os.close(database_fd)
@@ -1572,6 +1572,110 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
         "topHogs": hogs
     }
 
+def build_cli_scan_payload(scan_results, requested_path):
+    """Build the versioned, deduplicated contract used by agent integrations."""
+    resolved_path = os.path.realpath(os.path.abspath(os.path.expanduser(requested_path)))
+    findings_by_path = {}
+
+    def add_finding(item, source, duplicate_group=None, recommended_action='review', reasons=None):
+        if not isinstance(item, dict) or not item.get('path'):
+            return
+        path = os.path.realpath(item['path'])
+        finding = {
+            'path': path,
+            'sizeBytes': int(item.get('sizeBytes') or 0),
+            'category': item.get('category') or item.get('aiCategory') or 'File',
+            'confidence': item.get('confidence', 0),
+            'reasons': list(reasons or item.get('why') or []),
+            'source': source,
+            'recommendedAction': recommended_action,
+        }
+        if duplicate_group:
+            finding['duplicateGroup'] = duplicate_group
+        priority = {'topHog': 1, 'story': 2, 'duplicate': 3}
+        existing = findings_by_path.get(path)
+        if not existing or priority.get(source, 0) >= priority.get(existing.get('source'), 0):
+            findings_by_path[path] = finding
+
+    for item in scan_results.get('topHogs', []):
+        add_finding(item, 'topHog')
+    for story in scan_results.get('archaeologistStories', []):
+        for item in story.get('items', []):
+            add_finding(item, 'story', recommended_action=story.get('recommendedAction', 'review'), reasons=item.get('why') or story.get('why'))
+    for group in scan_results.get('duplicates', []):
+        group_id = group.get('hash') or f"{group.get('name', 'duplicate')}:{group.get('sizeBytes', 0)}"
+        for item in group.get('files', []):
+            add_finding(item, 'duplicate', duplicate_group=group_id, recommended_action='trash', reasons=['Exact SHA-256 duplicate group'])
+
+    duplicates = scan_results.get('duplicates', [])
+    duplicate_reclaimable = sum(
+        int(group.get('sizeBytes') or 0) * max(0, len(group.get('files', [])) - 1)
+        for group in duplicates
+    )
+    strategy_reclaimable = sum(
+        int(strategy.get('savingsBytes') or 0)
+        for strategy in scan_results.get('strategies', [])
+    )
+    coverage = scan_results.get('coverage') or {}
+    summary = {
+        'totalFiles': int(scan_results.get('totalFiles') or 0),
+        'reviewStories': len(scan_results.get('archaeologistStories') or []),
+        'duplicateGroups': int(scan_results.get('duplicateGroupsFound') or len(duplicates)),
+        'reclaimableBytes': duplicate_reclaimable + strategy_reclaimable,
+        'findingCount': len(findings_by_path),
+    }
+    payload = dict(scan_results)
+    payload.update({
+        'schemaVersion': 1,
+        'scope': {'requestedPath': requested_path, 'resolvedPath': resolved_path},
+        'summary': summary,
+        'coverage': coverage,
+        'findings': list(findings_by_path.values()),
+    })
+    return payload
+
+
+def run_cli_scan(args):
+    requested_path = args.path
+    safe, message = is_safe_scan_path(requested_path)
+    resolved_path = os.path.realpath(os.path.abspath(os.path.expanduser(requested_path)))
+    if not safe:
+        print(f"Scan failed: {message}", file=sys.stderr)
+        return 2
+    if not os.path.isdir(resolved_path):
+        print(f"Scan failed: path is not an accessible directory: {resolved_path}", file=sys.stderr)
+        return 2
+    try:
+        results = run_real_hd_audit(resolved_path, scan_global_caches=args.global_caches)
+        if results.get('cancelled'):
+            print('Scan failed: scan was cancelled before completion', file=sys.stderr)
+            return 2
+        payload = build_cli_scan_payload(results, requested_path)
+    except Exception as exc:
+        print(f"Scan failed: {exc}", file=sys.stderr)
+        return 2
+
+    if args.json:
+        json.dump(payload, sys.stdout, ensure_ascii=False, indent=2)
+        sys.stdout.write('\n')
+    else:
+        summary = payload['summary']
+        coverage = payload.get('coverage', {})
+        print(f"ZeroSpace scan: {payload['scope']['resolvedPath']}")
+        print(f"Files indexed: {summary['totalFiles']:,}")
+        print(f"Review stories: {summary['reviewStories']:,}")
+        print(f"Duplicate groups: {summary['duplicateGroups']:,}")
+        print(f"Reclaimable duplicate/cache space: {format_bytes_py(summary['reclaimableBytes'])}")
+        print(f"Skipped: {int(coverage.get('skippedDirectories') or 0):,} folders, {int(coverage.get('skippedFiles') or 0):,} files")
+        print(f"Findings: {summary['findingCount']:,}")
+
+    if args.fail_on == 'findings' and payload['summary']['findingCount'] > 0:
+        return 1
+    if args.fail_on == 'duplicates' and payload['summary']['duplicateGroups'] > 0:
+        return 1
+    return 0
+
+
 def format_bytes_py(bytes_val):
     if bytes_val == 0:
         return '0 B'
@@ -1614,7 +1718,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="ZeroSpace local storage audit server")
     parser.add_argument('--port', type=int, default=int(os.environ.get('ZEROSPACE_PORT', PORT)))
     parser.add_argument('--version', action='version', version='ZeroSpace 2.0.0')
+    subparsers = parser.add_subparsers(dest='command')
+    scan_parser = subparsers.add_parser('scan', help='Run a read-only agent-friendly workspace scan')
+    scan_parser.add_argument('path', help='Directory to scan')
+    scan_parser.add_argument('--json', action='store_true', help='Write the versioned machine-readable report to stdout')
+    scan_parser.add_argument('--global-caches', action='store_true', help='Include known global developer caches')
+    scan_parser.add_argument('--fail-on', choices=('findings', 'duplicates'), help='Exit 1 when the selected finding type exists')
     args = parser.parse_args(argv)
+    if args.command == 'scan':
+        return run_cli_scan(args)
     if not 1024 <= args.port <= 65535:
         parser.error('port must be between 1024 and 65535')
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
@@ -1629,4 +1741,4 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main() or 0)

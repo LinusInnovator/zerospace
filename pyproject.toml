@@ -19,3 +19,6 @@ classifiers = [
 
 [project.scripts]
 hd-detective = "scanner_backend:main"
+
+[tool.setuptools]
+py-modules = ["scanner_backend"]

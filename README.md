@@ -34,6 +34,24 @@ It is an experimental, open-source developer tool—not a consumer Mac cleaner. 
 
 ZeroSpace does not use a machine-learning model. Its candidate scores are transparent heuristics for ranking review—not probabilities or guarantees that a file is safe to remove.
 
+## Agent integration
+
+ZeroSpace can run headlessly inside an agent workflow without starting the browser:
+
+```bash
+hd-detective scan .
+hd-detective scan . --json > zerospace-report.json
+hd-detective scan . --json --fail-on duplicates
+```
+
+The CLI is read-only. Human output is the default; `--json` emits a versioned `schemaVersion: 1` report with a deduplicated `findings` array containing paths, sizes, categories, confidence, reasons, evidence sources, duplicate groups, and recommended actions. `--fail-on findings` or `--fail-on duplicates` returns exit code `1` for CI/agent gating; successful scans return `0`, and invalid or failed scans return `2`.
+
+This makes ZeroSpace useful as a storage-hygiene layer before an agent opens a pull request or starts another experiment. The localhost REST API remains available for richer integrations. An MCP server is intentionally not bundled; the CLI and JSON contract are the stable integration surface for now.
+
+Copy-paste recipes are in [`examples/agent-workspace-audit.sh`](examples/agent-workspace-audit.sh) and [`examples/github-actions-zerospace.yml`](examples/github-actions-zerospace.yml).
+
+For Codex, Claude, Cursor, or another shell-capable agent, the reusable instruction is simply: “Run `hd-detective scan . --json > zerospace-report.json`, inspect `.findings`, and do not delete anything without explicit review.”
+
 ---
 
 ## Current limitations and trust model

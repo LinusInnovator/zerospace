@@ -1,0 +1,20 @@
+name: Workspace hygiene
+
+on:
+  pull_request:
+
+jobs:
+  zerospace:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ZeroSpace
+        run: python3 -m pip install .
+      - name: Audit workspace
+        run: hd-detective scan . --json --fail-on duplicates > zerospace-report.json
+      - name: Upload ZeroSpace report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zerospace-report
+          path: zerospace-report.json

@@ -43,7 +43,7 @@ jobs:
 
       - name: Static checks
         run: |
-          python3 -m py_compile scanner_backend.py test_suite.py verify_security_hardening.py
+          python3 -m py_compile scanner_backend.py test_suite.py test_cli.py verify_security_hardening.py
           python3 -m py_compile test_edge_cases.py
           node --check app.js
           node --check playwright.config.js
@@ -55,6 +55,7 @@ jobs:
         run: |
           python3 test_suite.py
           python3 test_edge_cases.py
+          python3 test_cli.py
 
       - name: Run browser smoke suite
         run: npm run test:browser
