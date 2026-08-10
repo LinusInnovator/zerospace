@@ -1,6 +1,8 @@
 class HdDetective < Formula
   desc "Next-Gen macOS Storage Intelligence & Real-Time Hard Drive Optimizer"
   homepage "https://github.com/LinusInnovator/zerospace"
+  url "https://github.com/LinusInnovator/zerospace/releases/download/v2.0.0/hd-optimizer-detective-v2.0.0.tar.gz"
+  sha256 "c53cf1a850900ce26acbfc33f62d0c21c07728277e6b4ee5c380afcaed301fbb"
   head "https://github.com/LinusInnovator/zerospace.git", branch: "main"
   license "MIT"
 
