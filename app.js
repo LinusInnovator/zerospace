@@ -16,6 +16,42 @@ let activeScanId = 0;
 let activeScanController = null;
 let activeScanCancelledByUser = false;
 let activeBackendScanId = null;
+let scanIsActive = false;
+
+const scanAwarePanels = ['tabSmartCare', 'tabArchaeologist', 'tabDuplicates', 'tabBigFiles', 'tabTreemap', 'tabVelocity', 'tabScript'];
+
+function setGlobalScanState(active, progress = {}) {
+  scanIsActive = active;
+  scanAwarePanels.forEach((panelId) => {
+    const panel = document.getElementById(panelId);
+    if (!panel) return;
+    let stateBar = panel.querySelector('.tab-scan-state');
+    if (!stateBar) {
+      stateBar = document.createElement('div');
+      stateBar.className = 'tab-scan-state';
+      panel.prepend(stateBar);
+    }
+    stateBar.hidden = !active;
+    if (!active) return;
+    const files = Number(progress.filesScanned) || 0;
+    const phase = progress.phase === 'hashing' ? 'Verifying exact duplicates' : progress.phase === 'fingerprinting' ? 'Comparing duplicate candidates' : progress.phase === 'grouping' ? 'Grouping verified duplicates' : 'Updating inventory';
+    stateBar.textContent = `${phase} · ${files.toLocaleString()} files indexed · this tab is showing the latest partial view`;
+  });
+}
+
+function renderProgressiveViews(progress) {
+  const preview = Array.isArray(progress.candidatePreview) ? progress.candidatePreview : [];
+  if (preview.length) {
+    caseData.topHogs = preview;
+    renderBigFilesRadar();
+  }
+  if (progress.categoryBytes) {
+    caseData.categoryBytes = progress.categoryBytes;
+    renderAppleStorageBar();
+    renderTreemap();
+  }
+  renderDuplicatesLocker();
+}
 
 // DOM Elements
 const driveSelectPicker = document.getElementById('driveSelectPicker');
@@ -205,6 +241,7 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
       try {
         const progress = await fetch(`/api/scan_progress?scan_id=${encodeURIComponent(backendScanId)}`).then(res => res.json());
         if (scanId !== activeScanId) return;
+        setGlobalScanState(true, progress);
         const files = Number(progress.filesScanned) || 0;
         const directories = Number(progress.directoriesScanned) || 0;
         const processed = Number(progress.candidatesProcessed) || 0;
@@ -225,6 +262,7 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
         }
         if (statReclaimableSpace) statReclaimableSpace.textContent = 'Pending';
         renderLiveFindings(progress);
+        renderProgressiveViews(progress);
       } catch (_progressError) {
         snapshotStatus.textContent = `Scanning ${path}… ${seconds}s elapsed.`;
       }
@@ -232,6 +270,7 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
   }, 1000);
 
   showToast(`${automatic ? 'Refreshing' : 'Inspecting'} storage scope at ${path}...`, 'info');
+  setGlobalScanState(true, {phase: 'enumerating', filesScanned: 0});
   if (snapshotStatus) snapshotStatus.textContent = `Scanning ${path}… 0s elapsed. You can keep reviewing the previous snapshot.`;
   if (progressStrip) progressStrip.classList.add('is-scanning');
   if (cancelButton) cancelButton.hidden = false;
@@ -269,6 +308,7 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
     if (scanId === activeScanId) {
       activeScanController = null;
       activeBackendScanId = null;
+      setGlobalScanState(false);
       if (progressStrip) progressStrip.classList.remove('is-scanning');
       if (cancelButton) cancelButton.hidden = true;
       btnRealDiskScan.disabled = false;
@@ -735,10 +775,20 @@ function recalculateStats() {
 function renderDuplicatesLocker() {
   duplicatesListContainer.innerHTML = '';
 
+  if (scanIsActive) {
+    const pending = document.createElement('div');
+    pending.className = 'tab-inline-pending';
+    pending.textContent = 'Exact duplicate verification is still running. The previous evidence remains available after this scan completes.';
+    duplicatesListContainer.appendChild(pending);
+  }
+
   const dups = Array.isArray(caseData.duplicates) ? caseData.duplicates : [];
 
   if (dups.length === 0) {
-    duplicatesListContainer.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 40px;">No duplicate files detected in this audit.</div>';
+    const empty = document.createElement('div');
+    empty.style.cssText = 'text-align: center; color: var(--text-muted); padding: 40px;';
+    empty.textContent = scanIsActive ? 'New exact duplicate groups will appear when SHA-256 verification completes.' : 'No duplicate files detected in this audit.';
+    duplicatesListContainer.appendChild(empty);
     return;
   }
 

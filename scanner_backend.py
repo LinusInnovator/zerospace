@@ -1158,6 +1158,15 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
                                          skippedFiles=skipped_files,
                                          duplicateCandidateFiles=duplicate_candidate_files,
                                          duplicateCandidateBytes=duplicate_candidate_bytes,
+                                         categoryBytes={
+                                             'Dev Dependencies (node_modules)': node_modules_bytes,
+                                             'AI Models & Safetensors': ai_models_bytes,
+                                             '4K Video & Media Renders': media_bytes,
+                                             'Python __pycache__ Bytecode': pycache_bytes,
+                                             'VM Images (.vmdk / .iso)': vm_bytes,
+                                             'Archives & Database Dumps': archive_bytes,
+                                             'macOS .DS_Store Clutter': ds_store_bytes,
+                                         },
                                          candidatePreview=candidate_preview(),
                                          currentPath=dirpath)
             if cancelled:
