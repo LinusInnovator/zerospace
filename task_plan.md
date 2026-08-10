@@ -100,11 +100,11 @@ Enhance HD Optimizer Detective v2 UI and backend drill-down features according t
 - [x] Verify error isolation and clean scan handling in browser.
 
 ### Phase 27: ZeroSpace Rebranding & Open-Source Git Repository
-- [ ] Initialize Git repository in project root with clean commit history.
-- [ ] Rebrand UI branding in `index.html` to **ZeroSpace — Intelligent macOS APFS Engine**.
-- [ ] Update `scanner_backend.py`, `app.js`, `test_suite.py`, `launch.sh`, and `pyproject.toml` with **ZeroSpace** name.
-- [ ] Update `README.md`, `ARCHITECTURE.md`, `LICENSE` (MIT), and `SECURITY.md` for ZeroSpace.
-- [ ] Execute `test_suite.py` and commit 100% passing codebase to Git.
+- [x] Initialize Git repository in project root with clean commit history.
+- [x] Rebrand UI branding in `index.html` to **ZeroSpace — Intelligent macOS APFS Engine**.
+- [x] Update `scanner_backend.py`, `app.js`, `test_suite.py`, `launch.sh`, and `pyproject.toml` with **ZeroSpace** name.
+- [x] Update `README.md`, `ARCHITECTURE.md`, `LICENSE` (MIT), and `SECURITY.md` for ZeroSpace.
+- [x] Execute `test_suite.py` and commit 100% passing codebase to Git.
 
 ## Key Decisions & Constraints
 - **Zero External Dependencies:** Keep Python backend and JS frontend free of external library bloat.

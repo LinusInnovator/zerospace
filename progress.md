@@ -72,7 +72,14 @@
 - Imported missing `subprocess` and added missing `get_file_sha256()` hashing function in `scanner_backend.py`.
 - Verified live scanning of `/Users/linus` returning 104 real items & 2.15 GB `node_modules` cleanly.
 
+### Step 16: ZeroSpace Rebranding & Open-Source Git Repository
+- Formally rebranded the application to **ZeroSpace — Intelligent macOS APFS Engine**.
+- Updated UI logo (`ph-planet`), page title, sidebar header, and footer in `index.html`.
+- Updated backend service logs, test suite output, and `README.md` documentation.
+- Initialized local Git repository on `main` branch with clean initial commit.
+
 ## Verification Results
+- `git status` → Clean working tree (`main` branch commit `6f4af38`).
 - `python3 -m py_compile scanner_backend.py` → PASSED (0 errors).
 - `python3 test_suite.py` → PASSED (100% test coverage & spec match).
-- Live Home Drive Audit Verification → PASSED.
+- ZeroSpace Rebranding & Git Init Verification → PASSED.
