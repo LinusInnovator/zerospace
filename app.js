@@ -214,13 +214,16 @@ async function fetchSystemDrives() {
 
 // Live Hard Drive Scan
 async function runRealSystemDriveScan(path) {
-  showToast(`Running CleanMyMac Smart Scan at ${path}...`, 'info');
+  showToast(`Running ZeroSpace Smart Care Scan at ${path}...`, 'info');
   btnRealDiskScan.disabled = true;
   btnSmartCareScan.disabled = true;
 
   if (dialSvg) dialSvg.classList.add('scanning');
   dialMeterCircle.style.strokeDashoffset = "450";
   dialHealthScore.textContent = "...";
+
+  // Layer 1: Immediately render scanning skeletons so screen is NEVER black/empty!
+  renderScanningSkeletons();
 
   let data = null;
   try {
@@ -1300,6 +1303,55 @@ window.clearStorageCategoryFilter = function() {
 
   showToast("Cleared category filter.", "info");
 };
+
+function renderScanningSkeletons() {
+  const container = document.getElementById('archaeologistStoriesContainer');
+  if (container) {
+    container.innerHTML = `
+      <div class="scanning-radar-pulse" style="grid-column: span 2;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <i class="ph-duotone ph-compass ph-spin" style="font-size: 22px; color: #a855f7;"></i>
+          <span>Digital Archaeologist analyzing storage strata & 20 safety signals...</span>
+        </div>
+        <span style="font-size: 11px; padding: 2px 10px; border-radius: 12px; background: rgba(168,85,247,0.2); border: 1px solid #a855f7; color: #a855f7;">
+          SCANNING STRATA
+        </span>
+      </div>
+      <div class="skeleton-tile" style="padding: 22px 24px; display: flex; flex-direction: column; justify-content: space-between;">
+        <div style="display: flex; gap: 12px; align-items: center;">
+          <i class="ph-duotone ph-brain" style="font-size: 24px; color: rgba(168, 85, 247, 0.4);"></i>
+          <div style="height: 16px; width: 140px; background: rgba(255,255,255,0.08); border-radius: 4px;"></div>
+        </div>
+        <div style="height: 12px; width: 80%; background: rgba(255,255,255,0.05); border-radius: 4px; margin-top: 16px;"></div>
+        <div style="height: 12px; width: 60%; background: rgba(255,255,255,0.05); border-radius: 4px; margin-top: 8px;"></div>
+      </div>
+      <div class="skeleton-tile" style="padding: 22px 24px; display: flex; flex-direction: column; justify-content: space-between;">
+        <div style="display: flex; gap: 12px; align-items: center;">
+          <i class="ph-duotone ph-file-zip" style="font-size: 24px; color: rgba(168, 85, 247, 0.4);"></i>
+          <div style="height: 16px; width: 140px; background: rgba(255,255,255,0.08); border-radius: 4px;"></div>
+        </div>
+        <div style="height: 12px; width: 80%; background: rgba(255,255,255,0.05); border-radius: 4px; margin-top: 16px;"></div>
+        <div style="height: 12px; width: 60%; background: rgba(255,255,255,0.05); border-radius: 4px; margin-top: 8px;"></div>
+      </div>
+      <div class="skeleton-tile" style="padding: 22px 24px; display: flex; flex-direction: column; justify-content: space-between;">
+        <div style="display: flex; gap: 12px; align-items: center;">
+          <i class="ph-duotone ph-code" style="font-size: 24px; color: rgba(168, 85, 247, 0.4);"></i>
+          <div style="height: 16px; width: 140px; background: rgba(255,255,255,0.08); border-radius: 4px;"></div>
+        </div>
+        <div style="height: 12px; width: 80%; background: rgba(255,255,255,0.05); border-radius: 4px; margin-top: 16px;"></div>
+        <div style="height: 12px; width: 60%; background: rgba(255,255,255,0.05); border-radius: 4px; margin-top: 8px;"></div>
+      </div>
+      <div class="skeleton-tile" style="padding: 22px 24px; display: flex; flex-direction: column; justify-content: space-between;">
+        <div style="display: flex; gap: 12px; align-items: center;">
+          <i class="ph-duotone ph-folder-user" style="font-size: 24px; color: rgba(168, 85, 247, 0.4);"></i>
+          <div style="height: 16px; width: 140px; background: rgba(255,255,255,0.08); border-radius: 4px;"></div>
+        </div>
+        <div style="height: 12px; width: 80%; background: rgba(255,255,255,0.05); border-radius: 4px; margin-top: 16px;"></div>
+        <div style="height: 12px; width: 60%; background: rgba(255,255,255,0.05); border-radius: 4px; margin-top: 8px;"></div>
+      </div>
+    `;
+  }
+}
 
 function renderArchaeologistStories() {
   const container = document.getElementById('archaeologistStoriesContainer');

@@ -84,8 +84,13 @@
 - Added live **Radar Scan Progress Indicator** showing `Digital Archaeologist analyzing storage strata... [X / 6 Discovered]`.
 - Triggered smooth staggered pop-in animation (`.pop-visible`) sequentially (320ms steps per story card).
 
+### Step 18: Immediate Skeleton Hydration (Eliminate Empty Black Container State)
+- Resolved root cause of empty black screen before fetch completes by adding `renderScanningSkeletons()`.
+- Instantly hydrates 4 glowing glassmorphic skeleton cards (`.skeleton-tile` with animated `@keyframes skeletonShimmer`) & live Radar Pulse indicator at second 0.0 right when scan starts.
+- Ensures the screen is alive and animated immediately, seamlessly cross-fading into real audited story cards.
+
 ## Verification Results
 - `git status` → Clean working tree.
 - `python3 -m py_compile scanner_backend.py` → PASSED (0 errors).
 - `python3 test_suite.py` → PASSED (100% test coverage & spec match).
-- Premium Lazy Pop Staggered Animation Verification → PASSED.
+- Immediate Skeleton Hydration Verification → PASSED.

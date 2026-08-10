@@ -99,10 +99,10 @@ Enhance HD Optimizer Detective v2 UI and backend drill-down features according t
 - [x] Log exact UI stack trace to console when rendering exceptions occur instead of masking as "Backend connection offline".
 - [x] Verify error isolation and clean scan handling in browser.
 
-### Phase 28: Staggered "Lazy Pop" Card Entrance Animations
-- [x] Add `.lazy-card` and `.lazy-card.pop-visible` transition styling in `styles.css`.
-- [x] Implement live Radar Pulse scanning indicator (`.scanning-radar-pulse`) displaying live discovery counts.
-- [x] Implement staggered progressive pop-in in `renderArchaeologistStories()` in `app.js` (staggered 320ms steps).
+### Phase 29: Immediate Skeleton Hydration (Eliminate Empty Black Container State)
+- [x] Add `renderScanningSkeletons()` invoked instantly at second 0.0 when scan starts.
+- [x] Render glowing glassmorphic skeleton tiles (`.skeleton-tile` with `@keyframes skeletonShimmer`) & live Radar Pulse indicator.
+- [x] Eliminate the pitch-black empty container state during backend fetch.
 - [x] Execute `test_suite.py` and commit 100% passing codebase to Git.
 
 ## Key Decisions & Constraints

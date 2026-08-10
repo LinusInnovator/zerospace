@@ -891,3 +891,18 @@ body {
   0% { border-color: rgba(168, 85, 247, 0.25); box-shadow: 0 0 4px rgba(168, 85, 247, 0.1); }
   100% { border-color: rgba(168, 85, 247, 0.6); box-shadow: 0 0 16px rgba(168, 85, 247, 0.25); }
 }
+
+/* Glassmorphic Skeleton Shimmer */
+.skeleton-tile {
+  background: linear-gradient(90deg, rgba(16, 22, 38, 0.8) 25%, rgba(32, 44, 75, 0.9) 50%, rgba(16, 22, 38, 0.8) 75%) !important;
+  background-size: 200% 100% !important;
+  animation: skeletonShimmer 1.8s infinite ease-in-out !important;
+  border: 1px dashed rgba(168, 85, 247, 0.3) !important;
+  border-radius: var(--radius-md) !important;
+  min-height: 180px;
+}
+
+@keyframes skeletonShimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
