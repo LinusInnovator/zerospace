@@ -86,17 +86,44 @@ def test_api_scan_and_archaeologist():
     with open(os.path.join(cache_dir, "test.pyc"), "wb") as f:
         f.write(b"pycache_data" * 100)
 
+    shared_prefix = b"A" * 8192
+    duplicate_content = shared_prefix + (b"B" * 16384)
+    for filename in ("duplicate_a.dat", "duplicate_b.dat"):
+        with open(os.path.join(TEST_DIR, filename), "wb") as f:
+            f.write(duplicate_content)
+    with open(os.path.join(TEST_DIR, "same_header_not_duplicate.dat"), "wb") as f:
+        f.write(shared_prefix + (b"C" * 16384))
+
     encoded_path = urllib.parse.quote(TEST_DIR)
     req = urllib.request.Request(f"{BASE_URL}/api/scan?path={encoded_path}")
     with urllib.request.urlopen(req) as resp:
         data = json.loads(resp.read().decode('utf-8'))
         assert_true("scannedItems" in data, "Scanned items returned")
+        assert_true("duplicates" in data and "strategies" in data, "Complete frontend scan contract returned")
+        expected_paths = {
+            os.path.realpath(os.path.join(TEST_DIR, "duplicate_a.dat")),
+            os.path.realpath(os.path.join(TEST_DIR, "duplicate_b.dat")),
+        }
+        matching_groups = [
+            group for group in data.get("duplicates", [])
+            if {item.get("path") for item in group.get("files", [])} == expected_paths
+        ]
+        assert_true(len(matching_groups) == 1, "Full SHA-256 excludes same-header false positives")
         assert_true("archaeologistStories" in data, f"Returned {len(data.get('archaeologistStories', []))} Archaeology Stories")
         stories = data.get("archaeologistStories", [])
         assert_true(len(stories) > 0, f"Top Story: {stories[0].get('title') if stories else 'None'}")
 
-def test_apfs_transparent_compression():
-    log_step("POST /api/execute - APFS DecmpFS Transparent Compression")
+    with urllib.request.urlopen(req) as resp:
+        cached = json.loads(resp.read().decode('utf-8'))
+        assert_true(cached.get("snapshot", {}).get("fromCache") is True, "Fresh workspace snapshot reused")
+
+    refresh_req = urllib.request.Request(f"{BASE_URL}/api/scan?path={encoded_path}&refresh=1")
+    with urllib.request.urlopen(refresh_req) as resp:
+        refreshed = json.loads(resp.read().decode('utf-8'))
+        assert_true(refreshed.get("snapshot", {}).get("fromCache") is False, "Manual refresh bypasses snapshot cache")
+
+def test_review_first_blocks_advanced_compression():
+    log_step("POST /api/execute - Review-First Advanced Action Guard")
     sample_file = os.path.join(TEST_DIR, "compress_me.json")
     with open(sample_file, "w") as f:
         json.dump([{"key": "test_value_repeat" * 1000} for _ in range(200)], f)
@@ -114,8 +141,8 @@ def test_apfs_transparent_compression():
     req = urllib.request.Request(f"{BASE_URL}/api/execute", data=body, headers={'Content-Type': 'application/json'})
     with urllib.request.urlopen(req) as resp:
         data = json.loads(resp.read().decode('utf-8'))
-        assert_true(data.get("status") == "success", "Compression execution successful")
-        assert_true(os.path.exists(sample_file), "Compressed file remains accessible in original path")
+        assert_true(any("BLOCKED: Advanced action" in line for line in data.get("log", [])), "Advanced compression blocked by default")
+        assert_true(os.path.exists(sample_file), "Original file remains untouched")
 
 def test_security_hardening():
     log_step("Security Hardening - Command Injection & System Protection Shield")
@@ -166,7 +193,7 @@ def main():
         test_api_system_hud()
         test_api_reveal_in_finder()
         test_api_scan_and_archaeologist()
-        test_apfs_transparent_compression()
+        test_review_first_blocks_advanced_compression()
         test_security_hardening()
         print("\n==========================================================")
         print("🎉 ALL TESTS PASSED CLEANLY (100% SPEC MATCH)")

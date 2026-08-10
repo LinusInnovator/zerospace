@@ -1,58 +1,49 @@
 <div align="center">
 
 # ⚡ ZeroSpace v2.0
-### *Intelligent macOS APFS Storage & Hardware Engine*
+### *A local storage detective for agent-heavy development*
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-00f2fe.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 [![Python: 3.9+](https://img.shields.io/badge/Python-3.9%2B-38ef7d.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Backend Dependencies](https://img.shields.io/badge/Backend-Python%20stdlib-ff007f.svg?style=for-the-badge)](#architecture)
 [![macOS Protected](https://img.shields.io/badge/System%20Shield-Protected-00f2fe.svg?style=for-the-badge&logo=apple&logoColor=white)](https://apple.com)
 
-<img src="zerospace_banner.png" alt="ZeroSpace - Intelligent macOS APFS Engine" width="100%" style="border-radius: 12px; margin: 20px 0;" />
+Coding agents make experiments cheap: parallel worktrees, cloned projects, repeated dependencies, build output, model files, and forgotten prototypes accumulate quickly. **ZeroSpace** inspects a workspace, groups that debris, verifies exact duplicates with full-file SHA-256, and explains why an item may be worth reviewing.
 
-**ZeroSpace** brings APFS transparent compression (`com.apple.decmpfs` zero access loss), Digital Archaeologist 20-signal AI confidence scoring, 2-pass SHA-256 duplicate matching, Big File Radar filters, and real hardware detection (**sysctl** physical RAM & CPU load) to your Mac — with **zero external dependencies**.
+It is an experimental, open-source developer tool—not a consumer Mac cleaner. Scans and paths stay local, nothing is changed automatically, and normal cleanup moves reviewed items to Trash.
 
 </div>
 
 ---
 
-## 🌟 Key Pillars & Features
+## What it does
 
-- 🍏 **APFS DecmpFS Invisible Compression**: Compress idle developer assets & model checkpoints transparently with 0% access loss — macOS reads compressed files natively without decompression steps.
-- 📜 **Digital Archaeologist Engine**: Story-driven narrative cleanup highlighting forgotten workspace debris, duplicate version graveyards, and stale build artifacts with 20-signal safety confidence scoring.
-- 💎 **Liquid Glass Bento Grid 2.0**: Tactile glassmorphism cards (`backdrop-filter: blur(20px)`), hairline metallic borders (`rgba(255,255,255,0.08)`), electric cyan accents (`#00f2fe`), and Phosphor Duotone vector iconography.
-- ⚡ **360° Smart Care System Diagnostic**: Bounded hard-drive audit with a Spotlight fast path on supported macOS volumes and a filesystem-walk fallback.
-- 📡 **Big File Radar**: Isolate large files (>100MB, >500MB, >1GB, >5GB) or stale files untouched for >30, >90, or >365 days.
-- 🗺️ **Interactive Treemap Category Inspector**: Click any storage category block to inspect detailed subfile listings and directory paths in real time.
-- 🔒 **Cryptographic SHA-256 Duplicates Locker**: Fast 2-pass duplicate detection (8KB MD5 header hash → full SHA-256 verification) with 1-click smart selection (`⚡ Select All Duplicates`, `Keep Oldest`, `Keep Newest`, `Select Downloads`).
-- 📂 **Native macOS Finder Integration**: Highlight any discovered duplicate or space hog directly in Finder (`open -R`).
-- 🗑️ **"Move to Trash" Safe Mode vs Permanent Unlink**: Choose between moving flagged items safely to `~/.Trash/` (undoable in Finder) or permanent deletion.
-- 🛡️ **System Protection Shield**: Hardened backend security guard explicitly protecting `/System`, `/usr`, `/bin`, `/sbin`, `/etc`, `/Applications`, `~/.ssh`, and root `~` from accidental deletion.
-- 🧠 **Real Hardware HUD**: Native `sysctl` & `vm_stat` queries reporting live physical RAM usage (e.g. 64 GB), memory pressure, CPU load, and thermal status.
-- 📥 **JSON & CSV Audit Exporters**: 1-click exporting of full audit reports and space-hog lists for sysadmin compliance.
+- **Digital Archaeologist:** rule-based explanations for repeated dependencies, caches, checkpoints, generated assets, installers, and forgotten experiments.
+- **Exact duplicate evidence:** size and 8 KB header prefilter followed by full-file SHA-256 verification.
+- **Big File Radar and treemap:** inspect large or stale files by workspace category.
+- **Finder integration:** reveal every candidate before taking action.
+- **Review-first cleanup:** nothing is selected automatically; normal removal moves items to `~/.Trash`.
+- **Local reports:** export scan results as JSON or CSV.
+- **Protection Shield:** blocks mutations to macOS system and sensitive user paths.
+- **Fast reload snapshots:** page load reuses a server-memory snapshot for up to 10 minutes; **Scan Scope** always forces a fresh scan.
+
+ZeroSpace does not use a machine-learning model. Its candidate scores are transparent heuristics for ranking review—not probabilities or guarantees that a file is safe to remove.
 
 ---
 
-## ⚠️ Current Limitations & System Scope
+## Current limitations and trust model
 
 To ensure complete transparency as an open-source GitHub project, **ZeroSpace v2.0** explicitly documents the following technical scope and system boundaries:
 
-1. 🍎 **macOS APFS Spotlight Engine**:
-   - On macOS APFS volumes, the scanner leverages native APFS B-tree Spotlight kernel metadata queries (`mdfind`) for sub-100ms indexing.
-   - On Linux/Windows platforms or non-APFS volumes, the scanner seamlessly falls back to a multi-threaded `scandir` parallel worker pool (`ThreadPoolExecutor(max_workers=16)`).
+1. **Developer distribution:** this repository runs a Python localhost service and browser UI. It is not currently a signed or notarized `.app`.
 
-2. 🔑 **macOS Full Disk Access Permission**:
-   - To scan system root `/` or protected user subdirectories (`~/Library/Mail`, `~/Library/Messages`, `~/Desktop`), macOS requires Terminal / Python to be granted **Full Disk Access** in **System Settings → Privacy & Security → Full Disk Access**.
+2. **Localhost service:** the backend binds only to `127.0.0.1`, validates browser origins and Host headers, and serves the UI locally. Stop it with `Ctrl-C` when finished.
 
-3. 🍏 **APFS DecmpFS Transparent Compression Scope**:
-   - APFS Native Invisible Compression (`ditto --hfsCompression` utilizing extended attribute `com.apple.decmpfs`) requires an APFS or HFS+ filesystem.
-   - On non-APFS drives (FAT32, NTFS, EXT4), the engine automatically falls back to `.tar.gz` archive creation.
+3. **Permissions:** scan a specific workspace first. Scanning protected locations may require Full Disk Access for Terminal/Python; ZeroSpace does not need it for ordinary project folders.
 
-4. 🔒 **Local Single-User Desktop Utility**:
-   - The backend server binds strictly to `http://127.0.0.1:8080` for local security. It is engineered as a zero-dependency local desktop tool, not a multi-tenant remote SaaS server.
+4. **Conservative actions:** permanent deletion and advanced compression, migration, snapshot, and strategy operations are disabled by default. Review-first mode supports moving confirmed items to Trash.
 
-5. 🛡️ **Protection Shield Scope**:
-   - The Protection Shield explicitly locks root system locations (`/System`, `/usr`, `/bin`, `/sbin`, `/etc`, `/dev`, `~/.ssh`, `~/.zshrc`) against deletion to prevent accidental operating system corruption.
+5. **No safety guarantees:** duplicate content verification does not prove that a particular path is unused. Always inspect location and context before removal.
 
 ---
 
@@ -65,33 +56,11 @@ Clone and run the backend using Python 3. The backend uses only the Python stand
 git clone https://github.com/LinusInnovator/zerospace.git
 cd zerospace
 
-# Start backend server (Binds strictly to http://127.0.0.1:8080)
-python3 scanner_backend.py
+# Start the localhost workspace inspector
+./launch.sh
 ```
 
-Or execute via the launch helper script:
-
-```bash
-chmod +x launch.sh && ./launch.sh
-```
-
-Open **`http://127.0.0.1:8080`** in your web browser!
-
----
-
-## 📊 Feature Comparison Matrix
-
-| Feature | **HD Optimizer Detective** | **CleanMyMac v5** | **ncdu** | **czkawka** |
-| :--- | :---: | :---: | :---: | :---: |
-| **Price** | **100% Free & Open Source** | $39.95/yr | Free | Free |
-| **Design Aesthetic** | **2026 Bento Grid 2.0** | Commercial Glass UI | Terminal TUI | Desktop GTK |
-| **Dependencies** | **Zero External (Pure Python/JS)** | Proprietary app | C (ncurses) | Rust / GTK4 |
-| **SHA-256 Duplicates** | ✅ 2-Pass Fast Matching | ✅ Yes | ❌ No | ✅ Yes |
-| **System Protection Shield** | ✅ System Path Lock | ✅ Yes | ❌ No | ❌ No |
-| **Move to Trash Safe Mode** | ✅ Yes (`~/.Trash`) | ✅ Yes | ❌ Direct unlink | ❌ Direct unlink |
-| **Big File Radar** | ✅ Dual Age & Size Filters | ✅ Yes | ❌ Size only | ❌ Size only |
-| **JSON/CSV Export** | ✅ Yes | ❌ No | ❌ Export format | ❌ Limited |
-| **Terminal Script Generator** | ✅ Dry-run Shell Scripts | ❌ No | ❌ No | ❌ No |
+Open **`http://127.0.0.1:8080`**, choose a project/workspace folder, and scan. Use `Ctrl-C` in Terminal to stop the service.
 
 ---
 

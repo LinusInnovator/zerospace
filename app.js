@@ -2,72 +2,17 @@
  * HD Optimizer Detective v2 - CleanMyMac Premium UX Edition Engine
  */
 
-const WORKLOAD_PRESETS = {
-  ai: {
-    totalFiles: 124500,
-    healthScore: 48,
-    burnRate: "+9.2 GB / week",
-    daysLeft: "24 Days",
-    aiInsight: "Detected 42.5 GB of duplicate LLM quantization checkpoints (`.safetensors`) and 68.0 GB of inactive VM images (`.vmdk`).",
-    duplicates: [
-      {
-        hash: "f489c7d032e185882b5e282f1b4a2a1f",
-        name: "llama-3-70b-instruct-q4_k_m.safetensors",
-        sizeBytes: 42500000000,
-        aiCategory: "AI Model Checkpoint",
-        confidence: "99% High Confidence",
-        files: [
-          { path: "/Users/linus/ai-models/hf/llama-3-70b-instruct-q4_k_m.safetensors", mtime: "2026-01-10", selected: false, action: "delete" },
-          { path: "/Users/linus/Downloads/llama-3-70b-instruct-q4_k_m (1).safetensors", mtime: "2026-03-15", selected: true, action: "delete" }
-        ]
-      }
-    ],
-    strategies: [],
-    treemapNodes: [],
-    topHogs: []
-  },
-  dev: {
-    totalFiles: 42890,
-    healthScore: 58,
-    burnRate: "+4.2 GB / week",
-    daysLeft: "42 Days",
-    aiInsight: "Identified 18.5 GB of stale node_modules inactive for >60 days and 14.2 GB of Xcode DerivedData.",
-    duplicates: [
-      {
-        hash: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        name: "node_modules_vendor_bundle.js",
-        sizeBytes: 154200000,
-        aiCategory: "Dev Build Artifact",
-        confidence: "99% High Confidence",
-        files: [
-          { path: "/Users/linus/projects/app-v1/node_modules/vendor/bundle.js", mtime: "2025-11-12", selected: false, action: "delete" },
-          { path: "/Users/linus/projects/app-v2/node_modules/vendor/bundle.js", mtime: "2026-02-18", selected: true, action: "delete" },
-          { path: "/Users/linus/Downloads/bundle (1).js", mtime: "2026-04-02", selected: true, action: "delete" }
-        ]
-      }
-    ],
-    strategies: [
-      {
-        id: "strat-node-modules",
-        name: "Clean Real node_modules Directories",
-        category: "dev",
-        desc: "Finds dangling node_modules in inactive projects not updated in over 60 days.",
-        command: "find ~ -name 'node_modules' -type d -prune -mtime +60 -exec rm -rf {} +",
-        savingsBytes: 18500000000,
-        safety: "safe",
-        confidence: "99% High",
-        enabled: true,
-        action: "delete"
-      }
-    ],
-    treemapNodes: [],
-    topHogs: []
-  },
-  design: { totalFiles: 18240, healthScore: 52, burnRate: "+8.5 GB / week", daysLeft: "31 Days", aiInsight: "Found 24.5 GB of Adobe media caches.", duplicates: [], strategies: [], treemapNodes: [], topHogs: [] }
-};
+const EMPTY_AUDIT = Object.freeze({
+  totalFiles: 0,
+  healthScore: 0,
+  aiInsight: "Choose a workspace and scan to inspect real local files. Nothing is selected or changed automatically.",
+  duplicates: [], strategies: [], treemapNodes: [], topHogs: [],
+  scannedItems: [], archaeologistStories: [], categoryBytes: {}
+});
 
 let currentWorkload = "dev";
-let caseData = JSON.parse(JSON.stringify(WORKLOAD_PRESETS.dev));
+let caseData = structuredClone(EMPTY_AUDIT);
+let activeScanId = 0;
 
 // DOM Elements
 const driveSelectPicker = document.getElementById('driveSelectPicker');
@@ -213,15 +158,37 @@ async function fetchSystemDrives() {
       customOpt.value = 'custom';
       customOpt.textContent = '✏️ Custom Path...';
       driveSelectPicker.appendChild(customOpt);
+      driveSelectPicker.value = data.drives[0].path;
+      if (scanPathInput) scanPathInput.value = data.drives[0].path;
+      updateScopeHUDBanner(data.drives[0].path);
+      return data.drives[0].path;
     }
   } catch (e) {
     console.log("Using static drive list fallback.");
   }
+  return null;
 }
 
 // Live Hard Drive Scan
-async function runRealSystemDriveScan(path) {
-  showToast(`Running ZeroSpace Smart Care Scan at ${path}...`, 'info');
+async function runRealSystemDriveScan(path, { force = false, automatic = false } = {}) {
+  path = path || (scanPathInput ? scanPathInput.value.trim() : '');
+  if (!path) {
+    showToast('Choose or enter a workspace path first.', 'warning');
+    return;
+  }
+  const scanId = ++activeScanId;
+  const snapshotStatus = document.getElementById('scanSnapshotStatus');
+  const startedAt = Date.now();
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 120000);
+  const progressId = setInterval(() => {
+    if (scanId === activeScanId && snapshotStatus) {
+      snapshotStatus.textContent = `Scanning ${path}… ${Math.floor((Date.now() - startedAt) / 1000)}s elapsed.`;
+    }
+  }, 1000);
+
+  showToast(`${automatic ? 'Refreshing' : 'Inspecting'} agent workspace at ${path}...`, 'info');
+  if (snapshotStatus) snapshotStatus.textContent = `Scanning ${path}…`;
   btnRealDiskScan.disabled = true;
   btnSmartCareScan.disabled = true;
 
@@ -234,21 +201,31 @@ async function runRealSystemDriveScan(path) {
 
   let data = null;
   try {
-    const res = await fetch(`/api/scan?path=${encodeURIComponent(path)}`);
+    const params = new URLSearchParams({path, max_age: '600'});
+    if (force) params.set('refresh', '1');
+    const res = await fetch(`/api/scan?${params}`, {signal: controller.signal});
     data = await res.json();
   } catch (netErr) {
-    btnRealDiskScan.disabled = false;
-    btnSmartCareScan.disabled = false;
+    if (scanId !== activeScanId) return;
     if (dialSvg) dialSvg.classList.remove('scanning');
-    showToast(`Backend connection offline: ${netErr.message}`, 'warning');
+    const message = netErr.name === 'AbortError' ? 'Scan timed out after 120 seconds' : `Backend connection offline: ${netErr.message}`;
+    if (snapshotStatus) snapshotStatus.textContent = `${message}. Check the selected scope and restart the local service if needed.`;
+    showToast(message, 'warning');
     return;
+  } finally {
+    clearTimeout(timeoutId);
+    clearInterval(progressId);
+    if (scanId === activeScanId) {
+      btnRealDiskScan.disabled = false;
+      btnSmartCareScan.disabled = false;
+    }
   }
 
-  btnRealDiskScan.disabled = false;
-  btnSmartCareScan.disabled = false;
+  if (scanId !== activeScanId) return;
   if (dialSvg) dialSvg.classList.remove('scanning');
 
   if (!data || data.error) {
+    if (snapshotStatus) snapshotStatus.textContent = `Scan failed: ${data ? data.error : 'empty response'}.`;
     showToast(`Scan Error: ${data ? data.error : 'Empty response'}`, 'warning');
     return;
   }
@@ -256,7 +233,14 @@ async function runRealSystemDriveScan(path) {
   try {
     caseData = data || {};
     renderAll();
-    showToast(`Smart Care Scan Complete! Found ${Array.isArray(data.duplicates) ? data.duplicates.length : 0} duplicate groups.`, 'success');
+    const snapshot = data.snapshot || {};
+    const snapshotDate = snapshot.createdAt ? new Date(snapshot.createdAt * 1000) : new Date();
+    if (snapshotStatus) {
+      snapshotStatus.textContent = snapshot.fromCache
+        ? `Showing snapshot from ${snapshotDate.toLocaleTimeString()} (${Math.round(snapshot.ageSeconds || 0)}s old).`
+        : `Snapshot refreshed at ${snapshotDate.toLocaleTimeString()} in ${((Date.now() - startedAt) / 1000).toFixed(1)}s.`;
+    }
+    showToast(`Workspace scan complete: ${Array.isArray(data.duplicates) ? data.duplicates.length : 0} exact duplicate groups found.`, 'success');
   } catch (uiErr) {
     console.error("UI Render Exception:", uiErr);
     showToast(`UI Render Notice: ${uiErr.message}`, 'warning');
@@ -269,7 +253,7 @@ async function executeRealCleanup() {
   (caseData.duplicates || []).forEach(g => {
     (g.files || []).forEach(f => {
       if (f.selected) {
-        items.push({ path: f.path, action: f.action || 'delete' });
+        items.push({ path: f.path, action: f.action || 'trash' });
       }
     });
   });
@@ -296,7 +280,7 @@ async function executeRealCleanup() {
     const result = await res.json();
 
     if (result.status === 'success') {
-      showToast(`Real System Cleanup Finished! Reclaimed ${formatBytes(result.reclaimedBytes)}!`, 'success');
+      showToast(`Review complete. Moved selected items representing ${formatBytes(result.reclaimedBytes)} to Trash.`, 'success');
       runRealSystemDriveScan(scanPathInput.value);
       fetchRealSystemHud();
     } else {
@@ -307,11 +291,12 @@ async function executeRealCleanup() {
   }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   initSidebarNav();
-  fetchSystemDrives();
+  renderAll();
+  const initialWorkspace = await fetchSystemDrives();
   fetchRealSystemHud();
-  runRealSystemDriveScan(scanPathInput.value);
+  if (initialWorkspace) runRealSystemDriveScan(initialWorkspace, {automatic: true});
 
   driveSelectPicker.addEventListener('change', (e) => {
     const selected = e.target.value;
@@ -320,12 +305,12 @@ document.addEventListener('DOMContentLoaded', () => {
       scanPathInput.select();
     } else {
       scanPathInput.value = selected;
-      runRealSystemDriveScan(selected);
+      runRealSystemDriveScan(selected, {automatic: true});
     }
   });
 
-  btnRealDiskScan.addEventListener('click', () => runRealSystemDriveScan(scanPathInput.value));
-  btnSmartCareScan.addEventListener('click', () => runRealSystemDriveScan(scanPathInput.value));
+  btnRealDiskScan.addEventListener('click', () => runRealSystemDriveScan(scanPathInput.value, {force: true}));
+  btnSmartCareScan.addEventListener('click', () => runRealSystemDriveScan(scanPathInput.value, {force: true}));
 
   btnToggleHud.addEventListener('click', () => {
     fetchRealSystemHud();
@@ -335,9 +320,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (workloadSelect) workloadSelect.addEventListener('change', (e) => currentWorkload = e.target.value);
   if (btnScanPreset) {
     btnScanPreset.addEventListener('click', () => {
-      caseData = JSON.parse(JSON.stringify(WORKLOAD_PRESETS[currentWorkload] || WORKLOAD_PRESETS['dev']));
-      renderAll();
-      showToast(`Loaded ${workloadSelect ? workloadSelect.options[workloadSelect.selectedIndex].text : 'preset'}!`, 'success');
+      showToast('Demo presets were removed: scan a real workspace instead.', 'info');
     });
   }
 
@@ -414,7 +397,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (btnSelectAllSafe) {
     btnSelectAllSafe.addEventListener('click', () => {
-      (caseData.strategies || []).forEach(s => { if (s.safety === 'safe') s.enabled = true; });
+      // Cleanup strategies remain opt-in; opening review never enables them.
       renderStrategies();
       recalculateStats();
       renderTerminalScript();
@@ -452,7 +435,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (filterBigFileAge) filterBigFileAge.addEventListener('change', renderBigFilesRadar);
   if (btnFlagAllBigFiles) {
     btnFlagAllBigFiles.addEventListener('click', () => {
-      showToast("Flagged all filtered big files for deletion audit!", "success");
+      showToast("Added filtered files to the review list.", "success");
     });
   }
 });
@@ -492,12 +475,12 @@ window.closeModal = function(id) {
 window.updateScopeHUDBanner = function(path) {
   const scopePathText = document.getElementById('scopePathText');
   const scopeBadgeTag = document.getElementById('scopeBadgeTag');
-  const currentPath = path || (scanPathInput ? scanPathInput.value : '/Users/linus');
+  const currentPath = path || (scanPathInput ? scanPathInput.value : '~');
 
   if (scopePathText) scopePathText.textContent = currentPath;
 
   if (scopeBadgeTag) {
-    if (currentPath === '/Users/linus' || currentPath === '~') {
+    if (currentPath === '~') {
       scopeBadgeTag.textContent = "Home Drive (System Anchor)";
     } else if (currentPath === '/') {
       scopeBadgeTag.textContent = "Macintosh HD Root (/)";
@@ -525,11 +508,11 @@ window.navigateToPathScope = function(newPath) {
   }
   updateScopeHUDBanner(newPath);
   showToast(`Rescanning audit scope from ${newPath}`, "info");
-  runRealSystemDriveScan();
+  runRealSystemDriveScan(newPath, {force: true});
 };
 
 window.drillUpPathScope = function() {
-  let curr = scanPathInput ? scanPathInput.value : '/Users/linus';
+  let curr = scanPathInput ? scanPathInput.value : '~';
   if (curr === '/' || curr === '') return;
   let parts = curr.split('/').filter(Boolean);
   parts.pop();
@@ -561,11 +544,11 @@ function renderAppleStorageBar() {
 
   if (!appleStorageBar || !storageLegendContainer) return;
 
-  const currentPath = scanPathInput ? scanPathInput.value : '/Users/linus';
+  const currentPath = scanPathInput ? scanPathInput.value : '~';
   let pathName = 'Macintosh HD';
   if (currentPath.includes('scratch')) {
     pathName = 'Scratch Workspace (~/scratch)';
-  } else if (currentPath === '/Users/linus' || currentPath === '~') {
+  } else if (currentPath === '~') {
     pathName = 'Home Directory (~)';
   } else if (currentPath !== '/') {
     pathName = currentPath.split('/').filter(Boolean).pop() || currentPath;
@@ -660,15 +643,15 @@ function recalculateStats() {
   if (statTotalFiles) statTotalFiles.textContent = caseData.totalFiles ? caseData.totalFiles.toLocaleString() : '0';
   if (statDuplicateCount) statDuplicateCount.textContent = `${caseData.duplicates ? caseData.duplicates.length : 0} Groups`;
   if (statReclaimableSpace) statReclaimableSpace.textContent = formatBytes(totalReclaimable);
-  if (statHealthScore) statHealthScore.textContent = `${caseData.healthScore || 88}%`;
+  if (statHealthScore) statHealthScore.textContent = caseData.healthScore ? `${caseData.healthScore}%` : '—';
 
   const elSafeDeleteText = document.getElementById('btnTopSafeDeleteText');
   if (elSafeDeleteText) {
-    elSafeDeleteText.textContent = `⚡ Safe Delete Selected (${formatBytes(dupBytes)})`;
+    elSafeDeleteText.textContent = `Review Selected (${formatBytes(dupBytes)})`;
   }
 
-  const health = caseData.healthScore || 88;
-  if (dialHealthScore) dialHealthScore.textContent = `${health}%`;
+  const health = caseData.healthScore || 0;
+  if (dialHealthScore) dialHealthScore.textContent = health ? `${health}%` : '—';
   if (dialMeterCircle) {
     const offset = 565 - (565 * (health / 100));
     dialMeterCircle.style.strokeDashoffset = offset;
@@ -712,9 +695,7 @@ function renderDuplicatesLocker() {
             </div>
             <div style="display: flex; align-items: center; gap: 10px;">
               <div class="action-selector">
-                <button class="action-chip ${file.action === 'delete' ? 'active delete' : ''}" onclick="setFileAction(${gIdx}, ${fIdx}, 'delete')">Delete</button>
-                <button class="action-chip ${file.action === 'compress' ? 'active compress' : ''}" onclick="setFileAction(${gIdx}, ${fIdx}, 'compress')">Compress</button>
-                <button class="action-chip ${file.action === 'migrate' ? 'active migrate' : ''}" onclick="setFileAction(${gIdx}, ${fIdx}, 'migrate')">Migrate NAS</button>
+                <button class="action-chip ${file.action === 'trash' ? 'active delete' : ''}" onclick="setFileAction(${gIdx}, ${fIdx}, 'trash')">Move to Trash</button>
               </div>
               <label style="font-size: 12px; cursor: pointer;">
                 <input type="checkbox" class="checkbox-custom" data-group="${gIdx}" data-file="${fIdx}" ${file.selected ? 'checked' : ''}>
@@ -775,7 +756,7 @@ function applySmartSelection(rule) {
     if (rule === 'all') {
       group.files.forEach((f, idx) => {
         f.selected = (idx > 0);
-        if (idx > 0) f.action = 'delete';
+        if (idx > 0) f.action = 'trash';
       });
     } else if (rule === 'none') {
       group.files.forEach(f => f.selected = false);
@@ -784,20 +765,20 @@ function applySmartSelection(rule) {
       const oldestPath = sorted[0].path;
       group.files.forEach(f => {
         f.selected = (f.path !== oldestPath);
-        if (f.path !== oldestPath) f.action = 'delete';
+        if (f.path !== oldestPath) f.action = 'trash';
       });
     } else if (rule === 'newest') {
       const sorted = [...group.files].sort((a, b) => new Date(b.mtime) - new Date(a.mtime));
       const newestPath = sorted[0].path;
       group.files.forEach(f => {
         f.selected = (f.path !== newestPath);
-        if (f.path !== newestPath) f.action = 'delete';
+        if (f.path !== newestPath) f.action = 'trash';
       });
     } else if (rule === 'downloads') {
       group.files.forEach(f => {
         const isDownload = f.path.includes('/Downloads/') || f.path.includes('(1)');
         f.selected = isDownload;
-        if (isDownload) f.action = 'delete';
+        if (isDownload) f.action = 'trash';
       });
     }
   });
@@ -817,7 +798,7 @@ function applySmartSelection(rule) {
     });
   });
 
-  showToast(`Flagged ${totalSelectedFiles} duplicate copies (${formatBytes(totalSelectedBytes)}) for deletion!`, 'success');
+  showToast(`Selected ${totalSelectedFiles} duplicate copies (${formatBytes(totalSelectedBytes)}) for review.`, 'success');
 }
 
 function renderStrategies() {
@@ -858,49 +839,49 @@ function renderTreemap() {
   const categoryDefs = [
     { 
       name: "Dev Dependencies (node_modules)", 
-      size: caseData.nodeModulesSize || "18.5 GB", 
+      size: caseData.nodeModulesSize || "0 B",
       flex: "grid-column: span 3; grid-row: span 2;", 
       colorRgb: "0, 242, 254", 
       accent: "var(--primary)" 
     },
     { 
       name: "AI Models & Safetensors", 
-      size: caseData.aiModelsSize || "42.5 GB", 
+      size: caseData.aiModelsSize || "0 B",
       flex: "grid-column: span 3; grid-row: span 2;", 
       colorRgb: "139, 92, 246", 
       accent: "#a855f7" 
     },
     { 
       name: "4K Video & Media Renders", 
-      size: caseData.mediaSize || "14.2 GB", 
+      size: caseData.mediaSize || "0 B",
       flex: "grid-column: span 2; grid-row: span 1;", 
       colorRgb: "59, 130, 246", 
       accent: "#3b82f6" 
     },
     { 
       name: "Python __pycache__ Bytecode", 
-      size: caseData.pycacheSize || "2.4 GB", 
+      size: caseData.pycacheSize || "0 B",
       flex: "grid-column: span 2; grid-row: span 1;", 
       colorRgb: "245, 158, 11", 
       accent: "var(--accent-amber)" 
     },
     { 
       name: "VM Images (.vmdk / .iso)", 
-      size: caseData.vmImagesSize || "68.0 GB", 
+      size: caseData.vmImagesSize || "0 B",
       flex: "grid-column: span 2; grid-row: span 2;", 
       colorRgb: "244, 63, 94", 
       accent: "var(--accent-rose)" 
     },
     { 
       name: "Archives & Database Dumps", 
-      size: caseData.archivesSize || "8.6 GB", 
+      size: caseData.archivesSize || "0 B",
       flex: "grid-column: span 2; grid-row: span 1;", 
       colorRgb: "16, 185, 129", 
       accent: "var(--accent-emerald)" 
     },
     { 
       name: "macOS .DS_Store Clutter", 
-      size: caseData.dsStoreSize || "124 MB", 
+      size: caseData.dsStoreSize || "0 B",
       flex: "grid-column: span 2; grid-row: span 1;", 
       colorRgb: "148, 163, 184", 
       accent: "var(--text-muted)" 
@@ -967,12 +948,12 @@ function renderVelocityAndInsights() {
 
 function generateScriptContent() {
   let lines = ["#!/usr/bin/env bash\n# HD Optimizer Detective v2 - Multi-Action Script\nset -e\n"];
-  caseData.duplicates.forEach(g => {
-    g.files.forEach(f => {
+  (caseData.duplicates || []).forEach(g => {
+    (g.files || []).forEach(f => {
       if (f.selected) lines.push(`rm -f "${f.path}"`);
     });
   });
-  caseData.strategies.forEach(s => {
+  (caseData.strategies || []).forEach(s => {
     if (s.enabled) lines.push(s.command);
   });
   return lines.join("\n");
@@ -998,17 +979,7 @@ function renderDeletionPreview() {
   let deleteCnt = 0;
   let totalBytes = 0;
 
-  // 1. If no duplicate files selected yet, auto-select non-primary duplicate copies
-  let hasSelected = (caseData.duplicates || []).some(g => (g.files || []).some(f => f.selected));
-  if (!hasSelected && caseData.duplicates && caseData.duplicates.length > 0) {
-    caseData.duplicates.forEach(g => {
-      (g.files || []).forEach((f, idx) => {
-        if (idx > 0) f.selected = true; // Auto-flag secondary copy for deletion
-      });
-    });
-  }
-
-  // Render selected duplicates
+  // Render only items the user explicitly selected.
   (caseData.duplicates || []).forEach((g) => {
     (g.files || []).forEach((f) => {
       if (f.selected) {
@@ -1018,7 +989,7 @@ function renderDeletionPreview() {
         tr.style.borderBottom = '1px solid rgba(255, 255, 255, 0.06)';
         const pathEscaped = f.path.replace(/'/g, "\\'");
         tr.innerHTML = `
-          <td style="padding: 10px;"><span class="action-chip active delete"><i class="ph-duotone ph-trash"></i> DELETE COPY</span></td>
+          <td style="padding: 10px;"><span class="action-chip active delete"><i class="ph-duotone ph-trash"></i> MOVE TO TRASH</span></td>
           <td title="${f.path}" style="padding: 10px; font-family: var(--font-code); font-size: 12px; color: var(--text-main);">
             <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
               <span>${f.path}</span>
@@ -1056,7 +1027,7 @@ function renderDeletionPreview() {
     previewTableBody.innerHTML = `
       <tr>
         <td colspan="4" style="padding: 24px; text-align: center; color: var(--text-muted);">
-          No reclaimable items or duplicate files flagged for deletion. Run a scan to discover cleanable space.
+          No items are selected for review. Run a scan and inspect candidates first.
         </td>
       </tr>
     `;
@@ -1071,7 +1042,7 @@ function renderFileDistModal() {
     <div style="margin-bottom: 12px;">
       <div style="display: flex; justify-content: space-between; font-size: 13px; font-weight: 700;">
         <span>AI Models (.safetensors, .ckpt)</span>
-        <span>42.5 GB</span>
+        <span>0 B</span>
       </div>
       <div class="hud-bar-bg"><div class="hud-bar-fill" style="width: 45%;"></div></div>
     </div>
@@ -1239,7 +1210,7 @@ window.openCategoryInspector = function(categoryName) {
 };
 
 window.flagInspectorItem = function(path) {
-  showToast(`Flagged for deletion script: ${path}`, 'success');
+  showToast(`Added to review: ${path}`, 'success');
 };
 
 // Phase 5: Export JSON & CSV Reports
@@ -1318,7 +1289,7 @@ function renderScanningSkeletons() {
       <div class="scanning-radar-pulse" style="grid-column: span 2;">
         <div style="display: flex; align-items: center; gap: 10px;">
           <i class="ph-duotone ph-compass ph-spin" style="font-size: 22px; color: #a855f7;"></i>
-          <span>Digital Archaeologist analyzing storage strata & 20 safety signals...</span>
+          <span>Digital Archaeologist inspecting real workspace artifacts…</span>
         </div>
         <span style="font-size: 11px; padding: 2px 10px; border-radius: 12px; background: rgba(168,85,247,0.2); border: 1px solid #a855f7; color: #a855f7;">
           SCANNING STRATA
@@ -1368,7 +1339,7 @@ function renderArchaeologistStories() {
   const stories = caseData.archaeologistStories || [];
 
   if (stories.length === 0) {
-    container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 40px; grid-column: span 2;">Scanning storage strata for Digital Archaeology stories...</div>';
+    container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 48px; grid-column: span 2;">Choose an agent workspace above and run a scan. Only real files found in that scope will appear here.</div>';
     return;
   }
 
@@ -1379,7 +1350,7 @@ function renderArchaeologistStories() {
   radarBanner.innerHTML = `
     <div style="display: flex; align-items: center; gap: 10px;">
       <i class="ph-duotone ph-compass ph-spin" style="font-size: 20px; color: #a855f7;"></i>
-      <span id="radarBannerText">Digital Archaeologist analyzing storage strata stories...</span>
+      <span id="radarBannerText">Digital Archaeologist grouping workspace findings…</span>
     </div>
     <span id="radarCountTag" style="font-size: 11px; padding: 2px 10px; border-radius: 12px; background: rgba(168,85,247,0.2); border: 1px solid #a855f7; color: #a855f7;">
       0 / ${stories.length} Discovered
@@ -1410,7 +1381,7 @@ function renderArchaeologistStories() {
           <div style="text-align: right;">
             <div style="font-size: 18px; font-weight: 800; font-family: var(--font-code); color: var(--accent-emerald);">${story.recoverFormatted || '0 B'}</div>
             <div style="font-size: 11px; padding: 2px 8px; border-radius: 12px; background: rgba(168,85,247,0.15); border: 1px solid #a855f7; color: #a855f7; font-family: var(--font-code); display: inline-block; margin-top: 2px;">
-              ${story.confidence}% Confidence
+              ${story.confidence}/100 review score
             </div>
           </div>
         </div>
@@ -1430,7 +1401,7 @@ function renderArchaeologistStories() {
         </button>
         <div style="display: flex; gap: 6px;">
           <button class="btn btn-emerald" style="padding: 6px 12px; font-size: 11.5px; font-weight: 700;" onclick="openStoryInspector('${story.id}')">
-            ⚡ 3-Action Reclaim
+            Review Candidates
           </button>
         </div>
       </div>
@@ -1446,7 +1417,7 @@ function renderArchaeologistStories() {
       
       if (idx === stories.length - 1) {
         const radarBannerText = document.getElementById('radarBannerText');
-        if (radarBannerText) radarBannerText.textContent = `⚡ All ${stories.length} Archaeology Stories Discovered (100% Verified)`;
+        if (radarBannerText) radarBannerText.textContent = `Analysis complete: ${stories.length} workspace categories reviewed`;
         if (radarCountTag) {
           radarCountTag.textContent = "COMPLETE";
           radarCountTag.style.background = "rgba(16, 185, 129, 0.2)";
@@ -1491,7 +1462,7 @@ window.openStoryInspector = function(storyId) {
   if (title) title.textContent = story.title;
   if (icon) icon.className = `${story.icon || 'ph-compass'}`;
   if (subtitle) subtitle.textContent = story.subtitle;
-  if (needProb) needProb.innerHTML = `Probability of future need: <span style="color: var(--accent-emerald); font-weight: 700;">${story.futureNeedProb || 2}%</span>`;
+  if (needProb) needProb.innerHTML = `Rule-based review score: <span style="color: var(--accent-emerald); font-weight: 700;">${story.confidence || 0}/100</span>`;
 
   if (whyList) {
     whyList.innerHTML = (story.why || []).map(w => `<span style="background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.3); padding: 4px 10px; border-radius: 12px;"><i class="ph-duotone ph-check-circle" style="color: #a855f7;"></i> ${w.replace(/^✔\s*/, '')}</span>`).join('');
@@ -1499,15 +1470,22 @@ window.openStoryInspector = function(storyId) {
 
   if (tbody) {
     tbody.innerHTML = '';
-    const displayItems = (story.items && story.items.length > 0) ? story.items.slice(0, 30) : [
-      { name: story.title + " Bundle", path: "/Users/linus/.../" + story.id, confidence: story.confidence, futureNeedProb: story.futureNeedProb, size: story.recoverFormatted }
-    ];
+    const displayItems = (story.items || []).slice(0, 30);
+    if (displayItems.length === 0) {
+      const emptyRow = document.createElement('tr');
+      const emptyCell = document.createElement('td');
+      emptyCell.colSpan = 4;
+      emptyCell.style.cssText = 'padding: 28px; text-align: center; color: var(--text-muted);';
+      emptyCell.textContent = 'No real files were found for this category in the current scan.';
+      emptyRow.appendChild(emptyCell);
+      tbody.appendChild(emptyRow);
+    }
 
     displayItems.forEach((item, idx) => {
       const tr = document.createElement('tr');
       tr.style.borderBottom = '1px solid var(--glass-border)';
 
-      const recAction = story.recommendedAction || 'delete';
+      const recAction = story.recommendedAction || 'trash';
       const pathEscaped = item.path.replace(/'/g, "\\'");
 
       tr.innerHTML = `
@@ -1535,14 +1513,8 @@ window.openStoryInspector = function(storyId) {
         </td>
         <td style="padding: 10px 8px; text-align: right;">
           <div class="action-selector" style="justify-content: flex-end;">
-            <button class="action-chip ${recAction === 'delete' ? 'active delete' : 'delete'}" id="chip-del-${idx}" onclick="selectStoryItemAction('${pathEscaped}', 'delete', 'chip-del-${idx}', '${idx}')">
-              <i class="ph-duotone ph-trash"></i> Delete
-            </button>
-            <button class="action-chip ${recAction === 'compress' ? 'active compress' : 'compress'}" id="chip-comp-${idx}" onclick="selectStoryItemAction('${pathEscaped}', 'compress', 'chip-comp-${idx}', '${idx}')">
-              <i class="ph-duotone ph-file-zip"></i> Compress
-            </button>
-            <button class="action-chip ${recAction === 'archive' ? 'active archive' : 'archive'}" id="chip-arch-${idx}" onclick="selectStoryItemAction('${pathEscaped}', 'archive', 'chip-arch-${idx}', '${idx}')">
-              <i class="ph-duotone ph-archive"></i> Archive
+            <button class="action-chip ${recAction === 'trash' ? 'active delete' : 'delete'}" id="chip-del-${idx}" onclick="selectStoryItemAction('${pathEscaped}', 'trash', 'chip-del-${idx}', '${idx}')">
+              <i class="ph-duotone ph-trash"></i> Move to Trash
             </button>
           </div>
         </td>
@@ -1576,11 +1548,11 @@ function renderPathAssistantHUD() {
   const assistantClutterValue = document.getElementById('assistantClutterValue');
   const btnQuickCleanText = document.getElementById('btnQuickCleanText');
 
-  const currentPath = scanPathInput ? scanPathInput.value : '/Users/linus';
+  const currentPath = scanPathInput ? scanPathInput.value : '~';
   let pathName = 'Macintosh HD';
   if (currentPath.includes('scratch')) {
     pathName = '~/scratch';
-  } else if (currentPath === '/Users/linus' || currentPath === '~') {
+  } else if (currentPath === '~') {
     pathName = '~/Home';
   } else if (currentPath !== '/') {
     pathName = currentPath.split('/').filter(Boolean).pop() || currentPath;
@@ -1593,7 +1565,7 @@ function renderPathAssistantHUD() {
   Object.values(catBytesMap).forEach(b => totalCatBytes += (b || 0));
 
   if (assistantClutterValue) assistantClutterValue.textContent = formatBytes(totalCatBytes);
-  if (btnQuickCleanText) btnQuickCleanText.textContent = `⚡ Clean ${pathName} Now`;
+  if (btnQuickCleanText) btnQuickCleanText.textContent = `Review ${pathName} Candidates`;
 }
 
 window.exportShellScript = function() {

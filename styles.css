@@ -42,6 +42,8 @@
   padding: 0;
 }
 
+[hidden] { display: none !important; }
+
 .skip-link {
   position: fixed;
   top: 8px;
@@ -223,6 +225,21 @@ body {
   flex-wrap: wrap;
   gap: 14px;
 }
+
+.local-first-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -12px 0 22px;
+  padding: 11px 14px;
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  border-radius: var(--radius-md);
+  background: rgba(16, 185, 129, 0.08);
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+.local-first-notice i { color: var(--accent-emerald); font-size: 20px; }
+.local-first-notice strong { color: var(--text-main); }
 
 /* 2026 Bento Grid 2.0 Layout System */
 .bento-grid-2026 {

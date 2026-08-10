@@ -115,6 +115,25 @@ Enhance HD Optimizer Detective v2 UI and backend drill-down features according t
 - [x] Repair the Homebrew formula so it no longer advertises a placeholder URL/checksum; support `--HEAD` installs.
 - [x] Run syntax, static diff, and live localhost security checks.
 
+### Phase 31: Agent-Workspace Product Pivot
+- [x] Reposition ZeroSpace as an experimental local developer tool for agent-heavy workspaces.
+- [x] Remove simulated startup scan results, hard-coded personal paths, and misleading banner placement.
+- [x] Make the current repository workspace the initial suggested scan scope.
+- [x] Replace AI/probability/safety guarantees with transparent rule-based review scores.
+- [x] Default duplicate candidates to unselected and removal actions to Trash.
+- [x] Disable permanent deletion and advanced mutation actions unless explicitly unlocked by environment variables.
+- [x] Hide unrelated hardware, strategy, script, forecasting, and settings surfaces from primary navigation.
+- [x] Rewrite the README around the agent-workspace problem, local trust model, and developer-grade distribution.
+
+### Phase 32: Snapshot Loading & Scan Interaction Reliability
+- [x] Automatically load the selected workspace after drive discovery, never the unresolved placeholder path.
+- [x] Cache up to four recent scan snapshots in server memory with a 10-minute default freshness window.
+- [x] Make page reload reuse a fresh snapshot and make both scan buttons explicitly bypass the cache.
+- [x] Show elapsed scan time, snapshot timestamp/age, timeout errors, and completion state in the UI.
+- [x] Restore missing `duplicates` and `strategies` response fields that caused post-scan rendering to abort.
+- [x] Prevent stale concurrent responses and duplicate button handlers from corrupting UI state.
+- [x] Verify automatic load, cached reload, and forced refresh in the real browser.
+
 ## Key Decisions & Constraints
 - **Zero External Dependencies:** Keep Python backend and JS frontend free of external library bloat.
 - **Backward Compatibility:** Preserve existing API contracts (`/api/scan`, `/api/execute`, `/api/drives`, `/api/system_hud`).

@@ -21,12 +21,17 @@ import tarfile
 import subprocess
 import argparse
 import time
+import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 PORT = 8080
 MAX_REQUEST_BYTES = 256 * 1024
 MAX_EXECUTE_ITEMS = 500
+DEFAULT_SNAPSHOT_MAX_AGE = 10 * 60
+MAX_SNAPSHOT_ENTRIES = 4
+SCAN_CACHE = {}
+SCAN_CACHE_LOCK = threading.Lock()
 
 def safe_getsize(fpath):
     try:
@@ -149,16 +154,50 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
             self.send_json_response({"error": f"Scan access denied: {msg}"}, status=403)
             return
 
+        target_path = os.path.realpath(os.path.abspath(os.path.expanduser(target_path)))
+
         if not os.path.exists(target_path):
             self.send_json_response({"error": f"Path '{target_path}' does not exist"}, status=400)
             return
 
+        force_refresh = params.get('refresh', ['0'])[0] == '1'
+        try:
+            max_age = max(0, min(3600, int(params.get('max_age', [DEFAULT_SNAPSHOT_MAX_AGE])[0])))
+        except (TypeError, ValueError):
+            max_age = DEFAULT_SNAPSHOT_MAX_AGE
+
+        now = time.time()
+        with SCAN_CACHE_LOCK:
+            cached = SCAN_CACHE.get(target_path)
+        if not force_refresh and cached and now - cached['created_at'] <= max_age:
+            scan_results = dict(cached['result'])
+            scan_results['snapshot'] = {
+                'createdAt': cached['created_at'],
+                'ageSeconds': round(now - cached['created_at'], 1),
+                'fromCache': True,
+            }
+            self.send_json_response(scan_results)
+            return
+
         scan_results = run_real_hd_audit(target_path)
+        created_at = time.time()
+        with SCAN_CACHE_LOCK:
+            if len(SCAN_CACHE) >= MAX_SNAPSHOT_ENTRIES and target_path not in SCAN_CACHE:
+                oldest_path = min(SCAN_CACHE, key=lambda key: SCAN_CACHE[key]['created_at'])
+                SCAN_CACHE.pop(oldest_path, None)
+            SCAN_CACHE[target_path] = {'created_at': created_at, 'result': scan_results}
+        scan_results = dict(scan_results)
+        scan_results['snapshot'] = {
+            'createdAt': created_at,
+            'ageSeconds': 0,
+            'fromCache': False,
+        }
         self.send_json_response(scan_results)
 
     def handle_api_drives(self):
         user_home = os.path.expanduser('~')
         drives = [
+            {"name": "Current Workspace", "path": os.getcwd()},
             {"name": "Home Directory (~)", "path": user_home},
             {"name": "Macintosh HD (System Root)", "path": "/"},
             {"name": "Downloads (~/Downloads)", "path": os.path.join(user_home, "Downloads")},
@@ -290,10 +329,18 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
                     executed_log.append("REJECTED: Invalid item")
                     continue
                 file_path = item.get('path')
-                action = item.get('action', 'delete')
+                action = item.get('action', 'trash')
 
                 if action not in {'delete', 'trash', 'compress', 'transparent_compress', 'migrate', 'apfs_thin_snapshots', 'strategy'}:
                     executed_log.append(f"REJECTED: Unsupported action '{action}'")
+                    continue
+
+                if action == 'strategy' and item.get('command'):
+                    executed_log.append("REJECTED: Arbitrary shell command execution disabled for security hardening.")
+                    continue
+
+                if action in {'compress', 'transparent_compress', 'migrate', 'apfs_thin_snapshots', 'strategy'} and os.environ.get('ZEROSPACE_ENABLE_ADVANCED_ACTIONS') != '1':
+                    executed_log.append(f"BLOCKED: Advanced action '{action}' is disabled in review-first mode")
                     continue
 
                 if file_path and os.path.exists(file_path):
@@ -305,6 +352,9 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
                     size = os.path.getsize(file_path) if os.path.isfile(file_path) else 0
 
                     if action == 'delete':
+                        if os.environ.get('ZEROSPACE_ALLOW_PERMANENT_DELETE') != '1':
+                            executed_log.append("BLOCKED: Permanent deletion is disabled; use Move to Trash")
+                            continue
                         if os.path.islink(file_path):
                             os.unlink(file_path)
                         elif os.path.isfile(file_path):
@@ -386,8 +436,6 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
                             executed_log.append(f"Hardened Strategy Purged {purged_items_count} items in {target_dir}")
                         except Exception as ex:
                             executed_log.append(f"Hardened Strategy Error: {ex}")
-                elif action == 'strategy' and item.get('command'):
-                    executed_log.append("REJECTED: Arbitrary shell command execution disabled for security hardening.")
 
             self.send_json_response({
                 "status": "success",
@@ -517,9 +565,8 @@ def get_file_sha256(filepath):
 
 def calculate_file_confidence_score(fpath, fname, size_bytes, mtime_days=400, is_duplicate=False):
     """
-    20-Signal Safety Confidence Scoring Algorithm.
-    Evaluates probability (0 to 100%) that a file is safe to remove or archive,
-    returning (confidence_pct, future_need_prob_pct, why_reasons_list).
+    Rule-based candidate scoring heuristic.
+    The score ranks review candidates; it is not a probability or safety guarantee.
     """
     score = 0
     reasons = []
@@ -670,7 +717,7 @@ def build_archaeologist_narrative_stories(scanned_items, hogs, duplicates, root_
             "recoverBytes": ai_bytes,
             "recoverFormatted": format_bytes_py(ai_bytes),
             "itemCount": len(ai_items),
-            "recommendedAction": "delete",
+            "recommendedAction": "trash",
             "why": ["✔ Intermediate AI model weights", "✔ Re-downloadable from HuggingFace/Ollama", "✔ Un-accessed for 90+ days"],
             "items": ai_items
         },
@@ -684,7 +731,7 @@ def build_archaeologist_narrative_stories(scanned_items, hogs, duplicates, root_
             "recoverBytes": installer_bytes,
             "recoverFormatted": format_bytes_py(installer_bytes),
             "itemCount": len(installer_items),
-            "recommendedAction": "delete",
+            "recommendedAction": "trash",
             "why": ["✔ Software already installed in /Applications", "✔ Single-use setup image", "✔ Re-downloadable online"],
             "items": installer_items
         },
@@ -719,15 +766,15 @@ def build_archaeologist_narrative_stories(scanned_items, hogs, duplicates, root_
         {
             "id": "story-versions",
             "title": "Version Graveyard & Duplicates",
-            "subtitle": "Superseded presentation_v12_FINAL files and SHA-256 duplicate copies.",
+            "subtitle": "Versioned files and full-file SHA-256 duplicate copies.",
             "icon": "ph-copy",
             "confidence": 99,
             "futureNeedProb": 1,
             "recoverBytes": version_bytes,
             "recoverFormatted": format_bytes_py(version_bytes),
             "itemCount": len(version_items),
-            "recommendedAction": "delete",
-            "why": ["✔ Identical byte hash confirmed", "✔ Duplicate file exists in system", "✔ Guaranteed zero data loss"],
+            "recommendedAction": "trash",
+            "why": ["✔ Identical file content verified", "✔ Another copy exists", "✔ Review its location before moving it to Trash"],
             "items": version_items
         },
         {
@@ -773,6 +820,7 @@ def run_real_hd_audit(root_dir, max_files=25000):
     """Blazing-Fast Dual-Engine Hard Drive Audit & Live Verification Engine"""
     total_files = 0
     size_map = {}
+    seen_paths = set()
     hogs = []
     all_scanned_items = []
 
@@ -804,6 +852,10 @@ def run_real_hd_audit(root_dir, max_files=25000):
         for fpath in spotlight_paths:
             if not os.path.exists(fpath):
                 continue
+            fpath = os.path.realpath(fpath)
+            if fpath in seen_paths:
+                continue
+            seen_paths.add(fpath)
             total_files += 1
             fname = os.path.basename(fpath)
             lower_fname = fname.lower()
@@ -904,38 +956,47 @@ def run_real_hd_audit(root_dir, max_files=25000):
 
         if 'node_modules' in dirnames:
             nm_path = os.path.join(dirpath, 'node_modules')
-            nm_size = safe_dir_size(nm_path)
-            node_modules_bytes += nm_size
-            item_obj = {
-                "type": "📦 Folder",
-                "path": nm_path,
-                "size": format_bytes_py(nm_size),
-                "sizeBytes": nm_size,
-                "category": "Dev Dependencies (node_modules)"
-            }
-            hogs.append(item_obj)
-            all_scanned_items.append(item_obj)
+            real_nm_path = os.path.realpath(nm_path)
+            if real_nm_path not in seen_paths:
+                seen_paths.add(real_nm_path)
+                nm_size = safe_dir_size(nm_path)
+                node_modules_bytes += nm_size
+                item_obj = {
+                    "type": "📦 Folder",
+                    "path": nm_path,
+                    "size": format_bytes_py(nm_size),
+                    "sizeBytes": nm_size,
+                    "category": "Dev Dependencies (node_modules)"
+                }
+                hogs.append(item_obj)
+                all_scanned_items.append(item_obj)
             dirnames.remove('node_modules')
 
         if '__pycache__' in dirnames:
             pyc_path = os.path.join(dirpath, '__pycache__')
-            pyc_size = safe_dir_size(pyc_path)
-            pycache_bytes += pyc_size
-            all_scanned_items.append({
-                "type": "⚡ Bytecode",
-                "path": pyc_path,
-                "size": format_bytes_py(pyc_size),
-                "sizeBytes": pyc_size,
-                "category": "Python __pycache__ Bytecode"
-            })
+            real_pyc_path = os.path.realpath(pyc_path)
+            if real_pyc_path not in seen_paths:
+                seen_paths.add(real_pyc_path)
+                pyc_size = safe_dir_size(pyc_path)
+                pycache_bytes += pyc_size
+                all_scanned_items.append({
+                    "type": "⚡ Bytecode",
+                    "path": pyc_path,
+                    "size": format_bytes_py(pyc_size),
+                    "sizeBytes": pyc_size,
+                    "category": "Python __pycache__ Bytecode"
+                })
             dirnames.remove('__pycache__')
 
         for fname in filenames:
+            fpath = os.path.join(dirpath, fname)
+            real_fpath = os.path.realpath(fpath)
+            if real_fpath in seen_paths:
+                continue
+            seen_paths.add(real_fpath)
             total_files += 1
             if total_files > max_files:
                 break
-
-            fpath = os.path.join(dirpath, fname)
             lower_fname = fname.lower()
 
             if fname == '.DS_Store':
@@ -1035,23 +1096,30 @@ def run_real_hd_audit(root_dir, max_files=25000):
             # Pass 2: Full SHA-256 for matching headers
             for hdr, matched_items in header_map.items():
                 if len(matched_items) > 1:
-                    sha = get_file_sha256(matched_items[0]['path'])
-                    fname = os.path.basename(matched_items[0]['path'])
-                    duplicates_list.append({
-                        "hash": sha or hdr,
-                        "name": fname,
-                        "sizeBytes": size,
-                        "aiCategory": categorize_file_extension(fname),
-                        "confidence": "99% High (SHA-256 Match)",
-                        "files": [
-                            {
-                                "path": item['path'],
-                                "mtime": item['mtime'],
-                                "selected": idx > 0,
-                                "action": "delete"
-                            } for idx, item in enumerate(matched_items)
-                        ]
-                    })
+                    sha_map = {}
+                    for item in matched_items:
+                        sha = get_file_sha256(item['path'])
+                        if sha:
+                            sha_map.setdefault(sha, []).append(item)
+                    for sha, identical_items in sha_map.items():
+                        if len(identical_items) < 2:
+                            continue
+                        fname = os.path.basename(identical_items[0]['path'])
+                        duplicates_list.append({
+                            "hash": sha,
+                            "name": fname,
+                            "sizeBytes": size,
+                            "aiCategory": categorize_file_extension(fname),
+                            "confidence": "Exact content match (SHA-256)",
+                            "files": [
+                                {
+                                    "path": item['path'],
+                                    "mtime": item['mtime'],
+                                    "selected": False,
+                                    "action": "trash"
+                                } for item in identical_items
+                            ]
+                        })
 
     # Limit top duplicates to max 50 groups to prevent browser DOM freezing
     duplicates_list = duplicates_list[:50]
@@ -1101,7 +1169,7 @@ def run_real_hd_audit(root_dir, max_files=25000):
         })
 
     xcode_derived_data = os.path.expanduser('~/Library/Developer/Xcode/DerivedData')
-    if os.path.exists(xcode_derived_data):
+    if os.environ.get('ZEROSPACE_SCAN_GLOBAL_CACHES') == '1' and os.path.exists(xcode_derived_data):
         try:
             xcode_size = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(xcode_derived_data) for f in fs if os.path.isfile(os.path.join(r, f)))
             if xcode_size > 0:
@@ -1121,7 +1189,7 @@ def run_real_hd_audit(root_dir, max_files=25000):
             pass
 
     cargo_cache = os.path.expanduser('~/.cargo/registry/cache')
-    if os.path.exists(cargo_cache):
+    if os.environ.get('ZEROSPACE_SCAN_GLOBAL_CACHES') == '1' and os.path.exists(cargo_cache):
         try:
             cargo_size = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(cargo_cache) for f in fs if os.path.isfile(os.path.join(r, f)))
             if cargo_size > 0:
@@ -1141,7 +1209,7 @@ def run_real_hd_audit(root_dir, max_files=25000):
             pass
 
     pip_cache = os.path.expanduser('~/Library/Caches/pip')
-    if os.path.exists(pip_cache):
+    if os.environ.get('ZEROSPACE_SCAN_GLOBAL_CACHES') == '1' and os.path.exists(pip_cache):
         try:
             pip_size = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(pip_cache) for f in fs if os.path.isfile(os.path.join(r, f)))
             if pip_size > 0:
@@ -1161,7 +1229,7 @@ def run_real_hd_audit(root_dir, max_files=25000):
             pass
 
     npm_cache = os.path.expanduser('~/.npm')
-    if os.path.exists(npm_cache):
+    if os.environ.get('ZEROSPACE_SCAN_GLOBAL_CACHES') == '1' and os.path.exists(npm_cache):
         try:
             npm_size = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(npm_cache) for f in fs if os.path.isfile(os.path.join(r, f)))
             if npm_size > 0:
@@ -1181,7 +1249,7 @@ def run_real_hd_audit(root_dir, max_files=25000):
             pass
 
     yarn_cache = os.path.expanduser('~/Library/Caches/Yarn')
-    if os.path.exists(yarn_cache):
+    if os.environ.get('ZEROSPACE_SCAN_GLOBAL_CACHES') == '1' and os.path.exists(yarn_cache):
         try:
             yarn_size = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(yarn_cache) for f in fs if os.path.isfile(os.path.join(r, f)))
             if yarn_size > 0:
@@ -1201,7 +1269,7 @@ def run_real_hd_audit(root_dir, max_files=25000):
             pass
 
     brew_cache = os.path.expanduser('~/Library/Caches/Homebrew')
-    if os.path.exists(brew_cache):
+    if os.environ.get('ZEROSPACE_SCAN_GLOBAL_CACHES') == '1' and os.path.exists(brew_cache):
         try:
             brew_size = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(brew_cache) for f in fs if os.path.isfile(os.path.join(r, f)))
             if brew_size > 0:
@@ -1221,7 +1289,7 @@ def run_real_hd_audit(root_dir, max_files=25000):
             pass
 
     user_logs = os.path.expanduser('~/Library/Logs')
-    if os.path.exists(user_logs):
+    if os.environ.get('ZEROSPACE_SCAN_GLOBAL_CACHES') == '1' and os.path.exists(user_logs):
         try:
             logs_size = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(user_logs) for f in fs if os.path.isfile(os.path.join(r, f)))
             if logs_size > 5 * 1024 * 1024:
@@ -1241,6 +1309,8 @@ def run_real_hd_audit(root_dir, max_files=25000):
             pass
 
     try:
+        if os.environ.get('ZEROSPACE_SCAN_GLOBAL_CACHES') != '1':
+            raise RuntimeError("global cache scan disabled")
         tm_output = subprocess.check_output(['tmutil', 'listlocalsnapshots', '/'], stderr=subprocess.DEVNULL, text=True)
         snapshots = [line.strip() for line in tm_output.splitlines() if line.strip()]
         if snapshots:
@@ -1259,10 +1329,18 @@ def run_real_hd_audit(root_dir, max_files=25000):
     except Exception:
         pass
 
+    for strategy in real_strategies:
+        strategy["enabled"] = False
+        strategy["confidence"] = "Review required"
+
     archaeologist_stories = build_archaeologist_narrative_stories(all_scanned_items, hogs, duplicates_list, root_dir)
 
     return {
+        "totalFiles": total_files,
+        "healthScore": None,
         "archaeologistStories": archaeologist_stories,
+        "duplicates": duplicates_list,
+        "strategies": real_strategies,
         "diskUsage": {
             "totalBytes": total_disk_bytes,
             "usedBytes": used_disk_bytes,

@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ZeroSpace — Intelligent macOS APFS Storage & Hardware Engine</title>
-  <meta name="description" content="ZeroSpace: Next-generation macOS APFS transparent compression, 2-pass SHA-256 duplicate detection, and live hardware HUD.">
+  <title>ZeroSpace — Storage Detective for Agent Workspaces</title>
+  <meta name="description" content="A local, open-source workspace storage detective for developers using coding agents.">
   <link rel="stylesheet" href="styles.css">
   <!-- Phosphor Icons Web Script (Duotone Support) -->
   <script src="https://unpkg.com/@phosphor-icons/web"></script>
@@ -30,7 +30,7 @@
           <div class="sidebar-group-title">Overview</div>
           <a class="sidebar-item" data-tab="tabSmartCare">
             <i class="ph-duotone ph-sparkle sidebar-item-icon"></i>
-            <span>Smart Care</span>
+            <span>Workspace Scan</span>
           </a>
           <a class="sidebar-item active" data-tab="tabArchaeologist">
             <i class="ph-duotone ph-compass sidebar-item-icon" style="color: #a855f7;"></i>
@@ -44,7 +44,7 @@
             <i class="ph-duotone ph-copy sidebar-item-icon"></i>
             <span>Duplicates Locker</span>
           </a>
-          <a class="sidebar-item" data-tab="tabStrategies">
+          <a class="sidebar-item" data-tab="tabStrategies" hidden>
             <i class="ph-duotone ph-lightning sidebar-item-icon"></i>
             <span>Junk Strategies</span>
           </a>
@@ -60,11 +60,11 @@
             <i class="ph-duotone ph-map-trifold sidebar-item-icon"></i>
             <span>Storage Treemap</span>
           </a>
-          <a class="sidebar-item" data-tab="tabVelocity">
+          <a class="sidebar-item" data-tab="tabVelocity" hidden>
             <i class="ph-duotone ph-trend-up sidebar-item-icon"></i>
             <span>Growth Velocity</span>
           </a>
-          <a class="sidebar-item" data-tab="tabScript">
+          <a class="sidebar-item" data-tab="tabScript" hidden>
             <i class="ph-duotone ph-terminal-window sidebar-item-icon"></i>
             <span>Script Generator</span>
           </a>
@@ -72,7 +72,7 @@
       </div>
 
       <div style="font-size: 11px; color: var(--text-dim); text-align: center; border-top: 1px solid var(--glass-border); padding-top: 16px;">
-        ZeroSpace v2.0 • Intelligent macOS Engine
+        ZeroSpace v2.0 • Local developer tool
       </div>
     </aside>
 
@@ -84,17 +84,16 @@
           <div style="display: flex; align-items: center; gap: 8px;">
             <i class="ph-duotone ph-compass" style="font-size: 22px; color: var(--primary);"></i>
             <select id="driveSelectPicker" class="select-custom" style="font-weight: 600; min-width: 200px; border-color: rgba(251, 53, 181, 0.4);">
-              <option value="/Users/linus" selected>Home Directory (~)</option>
+              <option value="~" selected>Current Workspace</option>
               <option value="/">Macintosh HD (System Root /)</option>
-              <option value="/Users/linus/Downloads">Downloads Folder</option>
-              <option value="/Users/linus/Documents">Documents Folder</option>
-              <option value="/Users/linus/Desktop">Desktop Folder</option>
-              <option value="/Users/linus/.gemini/antigravity-ide/scratch">Scratch Workspace</option>
+              <option value="~/Downloads">Downloads Folder</option>
+              <option value="~/Documents">Documents Folder</option>
+              <option value="~/Desktop">Desktop Folder</option>
               <option value="custom">Custom Path...</option>
             </select>
           </div>
 
-          <input type="text" id="scanPathInput" class="select-custom" style="width: 220px;" value="/Users/linus" placeholder="/Users/linus">
+          <input type="text" id="scanPathInput" class="select-custom" style="width: 220px;" value="~" placeholder="~/Projects/my-workspace">
 
           <button id="btnScopeDrillUp" class="btn btn-secondary" style="padding: 7px 12px; font-size: 12px;" onclick="drillUpPathScope()" title="Move scope up to parent directory">
             <i class="ph-duotone ph-arrow-up"></i>
@@ -121,18 +120,23 @@
             <i class="ph-duotone ph-file-csv"></i>
             <span>CSV</span>
           </button>
-          <button id="btnToggleHud" class="btn btn-emerald" style="display: flex; align-items: center; gap: 6px; padding: 7px 12px; font-size: 12px;">
+          <button id="btnToggleHud" class="btn btn-emerald" style="display: none; align-items: center; gap: 6px; padding: 7px 12px; font-size: 12px;">
             <i class="ph-duotone ph-activity"></i>
             <span>HUD</span>
           </button>
-          <button id="btnSettings" class="btn btn-secondary" onclick="openModal('modalSettingsManager')" title="Open App Preferences & Settings" style="padding: 7px 12px; font-size: 12px;">
+          <button id="btnSettings" class="btn btn-secondary" onclick="openModal('modalSettingsManager')" title="Open App Preferences & Settings" style="padding: 7px 12px; font-size: 12px; display: none;">
             <i class="ph-duotone ph-gear"></i>
             <span>Settings</span>
           </button>
         </div>
       </header>
 
-      <!-- Section 1: Central Smart Care Bento View -->
+      <div class="local-first-notice" role="note">
+        <i class="ph-duotone ph-shield-check" aria-hidden="true"></i>
+        <div><strong>Local and review-first.</strong> Files and scan results stay on this Mac. Nothing is changed automatically; selected files move to Trash by default. <span id="scanSnapshotStatus">Waiting for workspace snapshot…</span></div>
+      </div>
+
+      <!-- Section 1: Central Workspace Scan View -->
       <div id="tabSmartCare" class="tab-panel">
         <!-- 2026 Asymmetrical Bento Grid 2.0 -->
         <div class="bento-grid-2026">
@@ -155,13 +159,7 @@
             <!-- Segmented Multi-Color Progress Bar -->
             <div class="apple-storage-bar-wrapper">
               <div class="apple-storage-bar" id="appleStorageBar">
-                <div class="storage-segment dev" style="width: 16%;" title="Dev Dependencies (node_modules): 18.5 GB" onclick="filterByStorageCategory('Dev Dependencies (node_modules)')"></div>
-                <div class="storage-segment ai" style="width: 32%;" title="AI Models & Safetensors: 42.5 GB" onclick="filterByStorageCategory('AI Models & Safetensors')"></div>
-                <div class="storage-segment media" style="width: 14%;" title="4K Video & Media Renders: 14.2 GB" onclick="filterByStorageCategory('4K Video & Media Renders')"></div>
-                <div class="storage-segment pycache" style="width: 6%;" title="Python __pycache__ Bytecode: 2.4 GB" onclick="filterByStorageCategory('Python __pycache__ Bytecode')"></div>
-                <div class="storage-segment vm" style="width: 22%;" title="VM Images (.vmdk / .iso): 68.0 GB" onclick="filterByStorageCategory('VM Images (.vmdk / .iso)')"></div>
-                <div class="storage-segment archives" style="width: 7%;" title="Archives & Database Dumps: 8.6 GB" onclick="filterByStorageCategory('Archives & Database Dumps')"></div>
-                <div class="storage-segment ds" style="width: 3%;" title="macOS .DS_Store Clutter: 124 MB" onclick="filterByStorageCategory('macOS .DS_Store Clutter')"></div>
+                <div class="storage-segment dev" style="width: 0%;" title="Dev Dependencies: scan required" onclick="filterByStorageCategory('Dev Dependencies (node_modules)')"></div>
               </div>
             </div>
 
@@ -170,37 +168,37 @@
               <div class="legend-chip dev" onclick="filterByStorageCategory('Dev Dependencies (node_modules)')">
                 <span class="legend-dot" style="background: #00f2fe;"></span>
                 <span>Dev Dependencies</span>
-                <span class="legend-size">18.5 GB</span>
+                <span class="legend-size">0 B</span>
               </div>
               <div class="legend-chip ai" onclick="filterByStorageCategory('AI Models & Safetensors')">
                 <span class="legend-dot" style="background: #a855f7;"></span>
                 <span>AI Models</span>
-                <span class="legend-size">42.5 GB</span>
+                <span class="legend-size">0 B</span>
               </div>
               <div class="legend-chip media" onclick="filterByStorageCategory('4K Video & Media Renders')">
                 <span class="legend-dot" style="background: #3b82f6;"></span>
                 <span>4K Media Renders</span>
-                <span class="legend-size">14.2 GB</span>
+                <span class="legend-size">0 B</span>
               </div>
               <div class="legend-chip pycache" onclick="filterByStorageCategory('Python __pycache__ Bytecode')">
                 <span class="legend-dot" style="background: #f59e0b;"></span>
                 <span>Python Bytecode</span>
-                <span class="legend-size">2.4 GB</span>
+                <span class="legend-size">0 B</span>
               </div>
               <div class="legend-chip vm" onclick="filterByStorageCategory('VM Images (.vmdk / .iso)')">
                 <span class="legend-dot" style="background: #f43f5e;"></span>
                 <span>VM Images</span>
-                <span class="legend-size">68.0 GB</span>
+                <span class="legend-size">0 B</span>
               </div>
               <div class="legend-chip archives" onclick="filterByStorageCategory('Archives & Database Dumps')">
                 <span class="legend-dot" style="background: #10b981;"></span>
                 <span>Archives & Dumps</span>
-                <span class="legend-size">8.6 GB</span>
+                <span class="legend-size">0 B</span>
               </div>
               <div class="legend-chip ds" onclick="filterByStorageCategory('macOS .DS_Store Clutter')">
                 <span class="legend-dot" style="background: #94a3b8;"></span>
                 <span>macOS System</span>
-                <span class="legend-size">124 MB</span>
+                <span class="legend-size">0 B</span>
               </div>
             </div>
           </div>
@@ -213,19 +211,19 @@
                 <circle id="dialMeterCircle" class="dial-meter-circle" cx="100" cy="100" r="90" />
               </svg>
               <div class="dial-center-text">
-                <div id="dialHealthScore" class="dial-score">88%</div>
-                <div class="dial-label">Drive Health</div>
+                <div id="dialHealthScore" class="dial-score">—</div>
+                <div class="dial-label">Workspace signal</div>
               </div>
             </div>
 
-            <h2 class="hero-title">360° Smart Care System Diagnostic</h2>
+            <h2 class="hero-title">Inspect Agent Workspace Debris</h2>
             <p id="heroSubtitle" class="hero-subtitle">
-              Inspect your hard drive for byte-for-byte SHA-256 duplicates, build caches, and stale AI checkpoint files in 1 click.
+              Find abandoned experiments, repeated dependencies, build output, exact duplicates, and model files—without uploading your paths or results.
             </p>
 
             <button id="btnSmartCareScan" class="btn-scan-main">
               <i class="ph-duotone ph-sparkle"></i>
-              <span>RUN SMART CARE DIAGNOSTIC</span>
+              <span>SCAN THIS WORKSPACE</span>
             </button>
           </div>
 
@@ -247,18 +245,18 @@
 
               <div class="hud-item" style="margin-bottom: 14px;">
                 <span style="font-size: 12.5px; color: var(--text-muted);">Scanned Clutter:</span>
-                <span id="assistantClutterValue" style="font-family: var(--font-code); font-weight: 700; color: #ffffff;">163.4 MB</span>
+                <span id="assistantClutterValue" style="font-family: var(--font-code); font-weight: 700; color: #ffffff;">0 B</span>
               </div>
 
               <div class="hud-item">
-                <span style="font-size: 12.5px; color: var(--text-muted);">Reclaim Safety:</span>
-                <span id="assistantConfidenceValue" style="font-family: var(--font-code); font-weight: 700; color: var(--accent-emerald);">98% Safe</span>
+                <span style="font-size: 12.5px; color: var(--text-muted);">Default action:</span>
+                <span id="assistantConfidenceValue" style="font-family: var(--font-code); font-weight: 700; color: var(--accent-emerald);">Review → Trash</span>
               </div>
             </div>
 
             <button id="btnQuickCleanPath" class="btn btn-emerald" style="width: 100%; justify-content: center; margin-top: 18px; font-weight: 700;" onclick="renderDeletionPreview()">
               <i class="ph-duotone ph-lightning"></i>
-              <span id="btnQuickCleanText">⚡ Clean Path Now</span>
+              <span id="btnQuickCleanText">Review Candidates</span>
             </button>
           </div>
 
@@ -268,7 +266,7 @@
               <i class="ph-duotone ph-folder-open" style="font-size: 24px; color: var(--primary);"></i>
               <span style="font-size: 13px; font-weight: 600; color: var(--text-muted);">Scanned Files</span>
             </div>
-            <div id="statTotalFiles" style="font-size: 28px; font-weight: 800; font-family: var(--font-code); color: #ffffff;">45,632</div>
+            <div id="statTotalFiles" style="font-size: 28px; font-weight: 800; font-family: var(--font-code); color: #ffffff;">0</div>
             <div style="font-size: 11.5px; color: var(--text-dim); margin-top: 6px;">Click for File Inspector ↗</div>
           </div>
 
@@ -278,7 +276,7 @@
               <i class="ph-duotone ph-copy" style="font-size: 24px; color: var(--accent-purple);"></i>
               <span style="font-size: 13px; font-weight: 600; color: var(--text-muted);">Duplicate Clutter</span>
             </div>
-            <div id="statDuplicateCount" style="font-size: 28px; font-weight: 800; font-family: var(--font-code); color: #ffffff;">88 Groups</div>
+            <div id="statDuplicateCount" style="font-size: 28px; font-weight: 800; font-family: var(--font-code); color: #ffffff;">0 Groups</div>
             <div style="font-size: 11.5px; color: var(--text-dim); margin-top: 6px;">Click for Evidence Locker ↗</div>
           </div>
 
@@ -288,7 +286,7 @@
               <i class="ph-duotone ph-rocket-launch" style="font-size: 24px; color: var(--accent-emerald);"></i>
               <span style="font-size: 13px; font-weight: 600; color: var(--text-muted);">Reclaimable Space</span>
             </div>
-            <div id="statReclaimableSpace" style="font-size: 28px; font-weight: 800; font-family: var(--font-code); color: var(--accent-emerald);">48.6 GB</div>
+            <div id="statReclaimableSpace" style="font-size: 28px; font-weight: 800; font-family: var(--font-code); color: var(--accent-emerald);">0 B</div>
             <div style="font-size: 11.5px; color: var(--text-dim); margin-top: 6px;">Click for Express Reclaim ↗</div>
           </div>
         </div>
@@ -301,16 +299,16 @@
             <div>
               <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
                 <i class="ph-duotone ph-compass" style="font-size: 28px; color: #a855f7;"></i>
-                <h2 style="font-size: 22px; font-weight: 800; font-family: var(--font-display); background: linear-gradient(135deg, #fff, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Digital Archaeologist Engine</h2>
+                <h2 style="font-size: 22px; font-weight: 800; font-family: var(--font-display); background: linear-gradient(135deg, #fff, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">Digital Archaeologist</h2>
               </div>
               <p style="font-size: 14px; color: var(--text-muted); max-width: 720px;">
-                We don’t just ask "What’s taking up space?" We calculate 20 signals to answer: <strong>"Which parts of your digital life have reached the end of their useful life?"</strong>
+                A rule-based explanation of what agent-heavy development leaves behind: repeated dependencies, caches, checkpoints, generated assets, and forgotten experiments. Every candidate remains yours to review.
               </p>
             </div>
             <div style="display: flex; gap: 12px; align-items: center;">
               <div style="background: rgba(0, 0, 0, 0.4); padding: 10px 18px; border-radius: var(--radius-md); border: 1px solid var(--glass-border); text-align: center;">
-                <div style="font-size: 11px; color: var(--text-muted);">ARCHAEOLOGY SCORE</div>
-                <div style="font-size: 20px; font-weight: 800; color: #a855f7; font-family: var(--font-code);">98% Safe</div>
+                <div style="font-size: 11px; color: var(--text-muted);">ANALYSIS MODE</div>
+                <div style="font-size: 16px; font-weight: 800; color: #a855f7; font-family: var(--font-code);">RULE-BASED</div>
               </div>
             </div>
           </div>
@@ -329,7 +327,7 @@
                 <i class="ph-duotone ph-copy" style="color: var(--primary);"></i>
                 <span>Duplicate Evidence Locker</span>
               </h2>
-              <p class="section-subtitle">Cryptographic SHA-256 duplicate matching. Safely purge selected items in 1 click.</p>
+              <p class="section-subtitle">Full-file SHA-256 matching. Review exact copies and move only your selections to Trash.</p>
             </div>
 
             <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
@@ -343,7 +341,7 @@
 
               <button id="btnTopSafeDelete" class="btn btn-primary" style="padding: 10px 20px; font-weight: 700; font-size: 13.5px;">
                 <i class="ph-duotone ph-trash"></i>
-                <span id="btnTopSafeDeleteText">⚡ Safe Delete Selected (0 B)</span>
+                <span id="btnTopSafeDeleteText">Review Selected (0 B)</span>
               </button>
             </div>
           </div>
@@ -582,7 +580,7 @@
         </h3>
         <button class="btn btn-secondary" onclick="closeModal('modalReclaimable')">✕</button>
       </div>
-      <div id="modalReclaimValue" style="font-size: 36px; font-weight: 800; font-family: var(--font-code); color: var(--primary); margin-bottom: 20px;">48.6 GB</div>
+      <div id="modalReclaimValue" style="font-size: 36px; font-weight: 800; font-family: var(--font-code); color: var(--primary); margin-bottom: 20px;">0 B</div>
       <button id="btnExpressReclaimModal" class="btn btn-emerald" style="width: 100%; justify-content: center;">
         <i class="ph-duotone ph-check-circle"></i>
         <span>Review Deletion Audit &amp; Reclaim</span>
@@ -595,11 +593,11 @@
       <div class="modal-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
         <h3 class="modal-title" style="font-size: 20px; font-weight: 700; display: flex; align-items: center; gap: 8px;">
           <i class="ph-duotone ph-shield-check"></i>
-          <span>AI Safety &amp; Risk Classification</span>
+          <span>Rule-Based Candidate Classification</span>
         </h3>
         <button class="btn btn-secondary" onclick="closeModal('modalConfidence')">✕</button>
       </div>
-      <p style="font-size: 13.5px; color: var(--text-muted);">AI Risk Classification ensures zero critical user files are deleted during cleanup.</p>
+      <p style="font-size: 13.5px; color: var(--text-muted);">Signals explain why an item may be reclaimable; they are recommendations, not guarantees. Review paths before moving anything to Trash.</p>
     </div>
   </div>
 
@@ -616,11 +614,11 @@
       <div style="background: rgba(8,11,20,0.6); padding: 16px; border-radius: var(--radius-md); margin-bottom: 16px; border: 1px solid var(--glass-border); display: flex; justify-content: space-around;">
         <div>
           <div style="font-size: 11px; color: var(--text-muted);">TOTAL RECLAIMABLE</div>
-          <div id="previewTotalReclaim" style="font-size: 20px; font-weight: 800; color: var(--accent-emerald);">48.6 GB</div>
+          <div id="previewTotalReclaim" style="font-size: 20px; font-weight: 800; color: var(--accent-emerald);">0 B</div>
         </div>
         <div>
-          <div style="font-size: 11px; color: var(--text-muted);">DELETE COPIES</div>
-          <div id="previewDeleteCount" style="font-size: 16px; font-weight: 700; color: var(--accent-rose);">3 Files</div>
+          <div style="font-size: 11px; color: var(--text-muted);">REVIEWED ITEMS</div>
+          <div id="previewDeleteCount" style="font-size: 16px; font-weight: 700; color: var(--accent-rose);">0 Items</div>
         </div>
       </div>
 
@@ -734,7 +732,7 @@
 
       <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
         <div id="storyModalNeedProb" style="font-size: 12px; color: var(--text-muted); font-family: var(--font-code);">
-          Probability of future need: <span style="color: var(--accent-emerald); font-weight: 700;">2%</span>
+          Rule-based review score: <span style="color: var(--accent-emerald); font-weight: 700;">—</span>
         </div>
         <div style="display: flex; gap: 10px;">
           <button class="btn btn-secondary" onclick="closeModal('modalStoryInspector')">Close</button>
