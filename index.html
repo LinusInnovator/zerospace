@@ -32,7 +32,7 @@
             <i class="ph-duotone ph-sparkle sidebar-item-icon"></i>
             <span>Storage Scan</span>
           </a>
-          <a class="sidebar-item active" data-tab="tabArchaeologist">
+          <a class="sidebar-item" data-tab="tabArchaeologist">
             <i class="ph-duotone ph-compass sidebar-item-icon" style="color: #a855f7;"></i>
             <span>Digital Archaeologist</span>
           </a>
@@ -102,7 +102,7 @@
 
           <button id="btnRealDiskScan" class="btn btn-primary">
             <i class="ph-duotone ph-magnifying-glass"></i>
-            <span>Scan Scope</span>
+            <span>Scan This Scope</span>
           </button>
         </div>
 
@@ -140,9 +140,21 @@
         <span id="scanSnapshotStatus">Preparing the first storage snapshot…</span>
         <button id="btnCancelScan" class="btn btn-secondary" type="button" hidden>Cancel scan</button>
       </div>
+      <div id="scanOverviewSummary" class="scan-overview-summary" hidden aria-live="polite">
+        <div class="scan-overview-heading">
+          <strong>Latest scan overview</strong>
+          <span id="scanOverviewScope">Selected scope</span>
+        </div>
+        <div class="scan-overview-metrics">
+          <div><strong id="overviewFiles">—</strong><span>files indexed</span></div>
+          <div><strong id="overviewStories">—</strong><span>review stories</span></div>
+          <div><strong id="overviewDuplicates">—</strong><span>duplicate groups</span></div>
+          <div><strong id="overviewReclaimable">—</strong><span>reviewable space</span></div>
+        </div>
+      </div>
 
       <!-- Section 1: Central Storage Scan View -->
-      <div id="tabSmartCare" class="tab-panel">
+      <div id="tabSmartCare" class="tab-panel active">
         <!-- 2026 Asymmetrical Bento Grid 2.0 -->
         <div class="bento-grid-2026">
           <!-- Apple-Style Storage Bar Module (Span 12) -->

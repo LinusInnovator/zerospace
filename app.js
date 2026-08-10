@@ -634,6 +634,7 @@ window.drillUpPathScope = function() {
 function renderAll() {
   updateScopeHUDBanner();
   recalculateStats();
+  renderOverviewSummary();
   renderDuplicatesLocker();
   renderStrategies();
   renderBigFilesRadar();
@@ -644,6 +645,32 @@ function renderAll() {
   renderTopHogs();
   renderVelocityAndInsights();
   renderTerminalScript();
+}
+
+function renderOverviewSummary() {
+  const summary = document.getElementById('scanOverviewSummary');
+  if (!summary) return;
+  const totalFiles = Number(caseData.totalFiles) || 0;
+  const stories = Array.isArray(caseData.archaeologistStories) ? caseData.archaeologistStories.length : 0;
+  const duplicates = Number.isFinite(Number(caseData.duplicateGroupsFound))
+    ? Number(caseData.duplicateGroupsFound)
+    : (Array.isArray(caseData.duplicates) ? caseData.duplicates.length : 0);
+  let reclaimable = 0;
+  (caseData.duplicates || []).forEach(group => {
+    (group.files || []).forEach(file => { if (file.selected) reclaimable += Number(file.size || group.sizeBytes || 0); });
+  });
+  (caseData.strategies || []).forEach(strategy => { if (strategy.enabled) reclaimable += Number(strategy.savingsBytes || 0); });
+  summary.hidden = totalFiles === 0 && stories === 0 && duplicates === 0;
+  const scope = document.getElementById('scanOverviewScope');
+  if (scope) scope.textContent = scanPathInput?.value ? `Scope: ${scanPathInput.value}` : 'Selected scope';
+  const files = document.getElementById('overviewFiles');
+  const storyCount = document.getElementById('overviewStories');
+  const duplicateCount = document.getElementById('overviewDuplicates');
+  const reclaimableValue = document.getElementById('overviewReclaimable');
+  if (files) files.textContent = totalFiles.toLocaleString();
+  if (storyCount) storyCount.textContent = stories.toLocaleString();
+  if (duplicateCount) duplicateCount.textContent = duplicates.toLocaleString();
+  if (reclaimableValue) reclaimableValue.textContent = formatBytes(reclaimable);
 }
 
 function renderAppleStorageBar() {
