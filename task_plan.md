@@ -99,11 +99,10 @@ Enhance HD Optimizer Detective v2 UI and backend drill-down features according t
 - [x] Log exact UI stack trace to console when rendering exceptions occur instead of masking as "Backend connection offline".
 - [x] Verify error isolation and clean scan handling in browser.
 
-### Phase 27: ZeroSpace Rebranding & Open-Source Git Repository
-- [x] Initialize Git repository in project root with clean commit history.
-- [x] Rebrand UI branding in `index.html` to **ZeroSpace — Intelligent macOS APFS Engine**.
-- [x] Update `scanner_backend.py`, `app.js`, `test_suite.py`, `launch.sh`, and `pyproject.toml` with **ZeroSpace** name.
-- [x] Update `README.md`, `ARCHITECTURE.md`, `LICENSE` (MIT), and `SECURITY.md` for ZeroSpace.
+### Phase 28: Staggered "Lazy Pop" Card Entrance Animations
+- [x] Add `.lazy-card` and `.lazy-card.pop-visible` transition styling in `styles.css`.
+- [x] Implement live Radar Pulse scanning indicator (`.scanning-radar-pulse`) displaying live discovery counts.
+- [x] Implement staggered progressive pop-in in `renderArchaeologistStories()` in `app.js` (staggered 320ms steps).
 - [x] Execute `test_suite.py` and commit 100% passing codebase to Git.
 
 ## Key Decisions & Constraints

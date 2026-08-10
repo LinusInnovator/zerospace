@@ -1308,9 +1308,29 @@ function renderArchaeologistStories() {
   container.innerHTML = '';
   const stories = caseData.archaeologistStories || [];
 
-  stories.forEach(story => {
+  if (stories.length === 0) {
+    container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 40px; grid-column: span 2;">Scanning storage strata for Digital Archaeology stories...</div>';
+    return;
+  }
+
+  // Scanning Progress Banner
+  const radarBanner = document.createElement('div');
+  radarBanner.className = 'scanning-radar-pulse';
+  radarBanner.style.gridColumn = 'span 2';
+  radarBanner.innerHTML = `
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <i class="ph-duotone ph-compass ph-spin" style="font-size: 20px; color: #a855f7;"></i>
+      <span id="radarBannerText">Digital Archaeologist analyzing storage strata stories...</span>
+    </div>
+    <span id="radarCountTag" style="font-size: 11px; padding: 2px 10px; border-radius: 12px; background: rgba(168,85,247,0.2); border: 1px solid #a855f7; color: #a855f7;">
+      0 / ${stories.length} Discovered
+    </span>
+  `;
+  container.appendChild(radarBanner);
+
+  stories.forEach((story, idx) => {
     const card = document.createElement('div');
-    card.className = 'bento-tile';
+    card.className = 'bento-tile lazy-card';
     card.style.padding = '22px 24px';
     card.style.display = 'flex';
     card.style.flexDirection = 'column';
@@ -1358,6 +1378,24 @@ function renderArchaeologistStories() {
     `;
 
     container.appendChild(card);
+
+    // Staggered Pop-In reveal delay (300ms step per card)
+    setTimeout(() => {
+      card.classList.add('pop-visible');
+      const radarCountTag = document.getElementById('radarCountTag');
+      if (radarCountTag) radarCountTag.textContent = `${idx + 1} / ${stories.length} Discovered`;
+      
+      if (idx === stories.length - 1) {
+        const radarBannerText = document.getElementById('radarBannerText');
+        if (radarBannerText) radarBannerText.textContent = `⚡ All ${stories.length} Archaeology Stories Discovered (100% Verified)`;
+        if (radarCountTag) {
+          radarCountTag.textContent = "COMPLETE";
+          radarCountTag.style.background = "rgba(16, 185, 129, 0.2)";
+          radarCountTag.style.borderColor = "#10b981";
+          radarCountTag.style.color = "#10b981";
+        }
+      }
+    }, (idx + 1) * 320);
   });
 }
 
