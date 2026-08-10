@@ -797,8 +797,20 @@ def build_archaeologist_narrative_stories(scanned_items, hogs, duplicates, root_
     archive_bytes = 0
     media_bytes = 0
 
-    # Categorize scanned items into narrative stories
+    # A categorized large file can appear in both bounded UI lists. Keep one
+    # narrative card per canonical path; exact copies remain represented by the
+    # dedicated duplicate story below.
+    unique_items = []
+    seen_item_paths = set()
     for item in (scanned_items or []) + (hogs or []):
+        item_path = os.path.realpath(item.get('path', ''))
+        if not item_path or item_path in seen_item_paths:
+            continue
+        seen_item_paths.add(item_path)
+        unique_items.append(item)
+
+    # Categorize scanned items into narrative stories
+    for item in unique_items:
         fpath = item.get('path', '')
         fname = os.path.basename(fpath)
         sz = item.get('sizeBytes', 0)
@@ -1048,6 +1060,19 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
         elif entry[0] > target_heap[0][0]:
             heapq.heapreplace(target_heap, entry)
 
+    def candidate_preview():
+        preview = []
+        seen_preview_paths = set()
+        for _, _, item in sorted(candidate_heap + hog_heap, reverse=True, key=lambda entry: entry[0]):
+            path = item.get('path')
+            if not path or path in seen_preview_paths:
+                continue
+            seen_preview_paths.add(path)
+            preview.append(item)
+            if len(preview) == 12:
+                break
+        return preview
+
     def walk_error(_error):
         nonlocal skipped_directories
         skipped_directories += 1
@@ -1133,7 +1158,7 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
                                          skippedFiles=skipped_files,
                                          duplicateCandidateFiles=duplicate_candidate_files,
                                          duplicateCandidateBytes=duplicate_candidate_bytes,
-                                         candidatePreview=[entry[2] for entry in sorted(candidate_heap + hog_heap, reverse=True, key=lambda item: item[0])[:12]],
+                                         candidatePreview=candidate_preview(),
                                          currentPath=dirpath)
             if cancelled:
                 break
