@@ -966,6 +966,7 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
     skipped_directories = 0
     skipped_files = 0
     duplicate_candidate_files = 0
+    duplicate_candidate_bytes = 0
     candidate_heap = []
     hog_heap = []
     heap_sequence = 0
@@ -1080,6 +1081,7 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
                     record_ui_item(item, hog_heap, MAX_TOP_HOGS)
                 if size > 20 * 1024:
                     duplicate_candidate_files += 1
+                    duplicate_candidate_bytes += size
                     import datetime
                     mtime = datetime.date.fromtimestamp(stat.st_mtime).isoformat()
                     pending_rows.append((size, fpath, mtime))
@@ -1092,6 +1094,8 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
                                          skippedDirectories=skipped_directories,
                                          skippedFiles=skipped_files,
                                          duplicateCandidateFiles=duplicate_candidate_files,
+                                         duplicateCandidateBytes=duplicate_candidate_bytes,
+                                         candidatePreview=[entry[2] for entry in sorted(candidate_heap + hog_heap, reverse=True, key=lambda item: item[0])[:12]],
                                          currentPath=dirpath)
             if cancelled:
                 break

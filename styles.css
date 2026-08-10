@@ -267,6 +267,30 @@ body {
   animation: statusPulse 1s ease-in-out infinite;
 }
 
+.live-finding-card {
+  padding: 18px 20px;
+  min-width: 0;
+  border-color: rgba(0, 242, 254, 0.22);
+}
+.live-finding-card h3 {
+  margin: 0 0 7px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+}
+.live-finding-card p { margin: 0 0 8px; color: var(--accent-emerald); font-size: 12px; }
+.live-finding-card code {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+.live-finding-actions { display: flex; gap: 8px; margin-top: 14px; }
+.live-finding-actions .btn { padding: 6px 9px; font-size: 11px; }
+
 /* 2026 Bento Grid 2.0 Layout System */
 .bento-grid-2026 {
   display: grid;

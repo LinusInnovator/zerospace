@@ -224,6 +224,7 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
             : (progress.phase === 'enumerating' ? 'Pending' : 'Checking…');
         }
         if (statReclaimableSpace) statReclaimableSpace.textContent = 'Pending';
+        renderLiveFindings(progress);
       } catch (_progressError) {
         snapshotStatus.textContent = `Scanning ${path}… ${seconds}s elapsed.`;
       }
@@ -1402,6 +1403,52 @@ function renderScanningSkeletons() {
       </div>
     `;
   }
+}
+
+function renderLiveFindings(progress) {
+  const container = document.getElementById('archaeologistStoriesContainer');
+  if (!container) return;
+  const findings = Array.isArray(progress.candidatePreview) ? progress.candidatePreview : [];
+  container.innerHTML = '';
+
+  const banner = document.createElement('div');
+  banner.className = 'scanning-radar-pulse';
+  banner.style.gridColumn = 'span 2';
+  banner.innerHTML = `<div style="display:flex;align-items:center;gap:10px;"><i class="ph-duotone ph-compass ph-spin" style="font-size:22px;color:#a855f7;"></i><span>Live findings — review while the full scan continues</span></div><span style="font-size:11px;padding:2px 10px;border-radius:12px;background:rgba(168,85,247,0.2);border:1px solid #a855f7;color:#a855f7;">${(Number(progress.filesScanned) || 0).toLocaleString()} FILES INDEXED</span>`;
+  container.appendChild(banner);
+
+  if (findings.length === 0) {
+    const waiting = document.createElement('div');
+    waiting.className = 'skeleton-tile';
+    waiting.style.cssText = 'grid-column: span 2; padding: 32px; color: var(--text-muted); text-align: center;';
+    waiting.textContent = 'Still enumerating accessible files. Actionable findings will appear here as soon as candidates are confirmed.';
+    container.appendChild(waiting);
+    return;
+  }
+
+  findings.slice(0, 8).forEach((item) => {
+    const card = document.createElement('article');
+    card.className = 'bento-tile live-finding-card';
+    const title = document.createElement('h3');
+    title.textContent = item.path.split('/').pop() || item.path;
+    const detail = document.createElement('p');
+    detail.textContent = `${item.category || 'Large file'} · ${item.size || formatBytes(item.sizeBytes || 0)}`;
+    const path = document.createElement('code');
+    path.textContent = item.path;
+    const actions = document.createElement('div');
+    actions.className = 'live-finding-actions';
+    const finder = document.createElement('button');
+    finder.className = 'btn btn-secondary';
+    finder.textContent = 'Reveal in Finder';
+    finder.addEventListener('click', () => revealInFinder(item.path));
+    const scope = document.createElement('button');
+    scope.className = 'btn btn-secondary';
+    scope.textContent = 'Scan folder';
+    scope.addEventListener('click', () => navigateToPathScope(item.path.substring(0, item.path.lastIndexOf('/')) || '/'));
+    actions.append(finder, scope);
+    card.append(title, detail, path, actions);
+    container.appendChild(card);
+  });
 }
 
 function renderArchaeologistStories() {
