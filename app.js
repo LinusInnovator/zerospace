@@ -7,7 +7,7 @@ const EMPTY_AUDIT = Object.freeze({
   healthScore: 0,
   aiInsight: "Choose a storage scope and scan to inspect real local files. Nothing is selected or changed automatically.",
   duplicates: [], strategies: [], treemapNodes: [], topHogs: [],
-  scannedItems: [], archaeologistStories: [], categoryBytes: {}
+  scannedItems: [], archaeologistStories: [], categoryBytes: {}, progressiveReclaimableBytes: 0
 });
 
 let currentWorkload = "dev";
@@ -50,7 +50,14 @@ function renderProgressiveViews(progress) {
     renderAppleStorageBar();
     renderTreemap();
   }
+  if (Array.isArray(progress.duplicatePreview)) {
+    caseData.duplicates = progress.duplicatePreview;
+    caseData.duplicateGroupsFound = Number(progress.duplicateGroupsFound) || progress.duplicatePreview.length;
+    caseData.progressiveReclaimableBytes = Number(progress.progressiveReclaimableBytes) || 0;
+  }
   renderDuplicatesLocker();
+  recalculateStats();
+  renderOverviewSummary();
 }
 
 // DOM Elements
@@ -256,11 +263,14 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
         setDialValue(files ? files.toLocaleString() : `${seconds}s`);
         if (statTotalFiles) statTotalFiles.textContent = files.toLocaleString();
         if (statDuplicateCount) {
-          statDuplicateCount.textContent = progress.phase === 'grouping'
+          statDuplicateCount.textContent = groupsFound
             ? `${groupsFound.toLocaleString()}+ Groups`
             : (progress.phase === 'enumerating' ? 'Pending' : 'Checking…');
         }
-        if (statReclaimableSpace) statReclaimableSpace.textContent = 'Pending';
+        if (statReclaimableSpace) {
+          const progressiveBytes = Number(progress.progressiveReclaimableBytes) || 0;
+          statReclaimableSpace.textContent = progressiveBytes ? formatBytes(progressiveBytes) : 'Pending';
+        }
         renderLiveFindings(progress);
         renderProgressiveViews(progress);
       } catch (_progressError) {
@@ -660,6 +670,9 @@ function renderOverviewSummary() {
     (group.files || []).forEach(file => { if (file.selected) reclaimable += Number(file.size || group.sizeBytes || 0); });
   });
   (caseData.strategies || []).forEach(strategy => { if (strategy.enabled) reclaimable += Number(strategy.savingsBytes || 0); });
+  if (scanIsActive && Number(caseData.progressiveReclaimableBytes) > reclaimable) {
+    reclaimable = Number(caseData.progressiveReclaimableBytes);
+  }
   summary.hidden = totalFiles === 0 && stories === 0 && duplicates === 0;
   const scope = document.getElementById('scanOverviewScope');
   if (scope) scope.textContent = scanPathInput?.value ? `Scope: ${scanPathInput.value}` : 'Selected scope';
@@ -776,6 +789,9 @@ function recalculateStats() {
   (caseData.strategies || []).forEach(s => { if (s.enabled) stratBytes += s.savingsBytes; });
 
   const totalReclaimable = dupBytes + stratBytes;
+  const displayedReclaimable = scanIsActive
+    ? Math.max(totalReclaimable, Number(caseData.progressiveReclaimableBytes) || 0)
+    : totalReclaimable;
 
   if (statTotalFiles) statTotalFiles.textContent = caseData.totalFiles ? caseData.totalFiles.toLocaleString() : '0';
   if (statDuplicateCount) {
@@ -784,7 +800,7 @@ function recalculateStats() {
       : (caseData.duplicates ? caseData.duplicates.length : 0);
     statDuplicateCount.textContent = `${duplicateGroupCount.toLocaleString()} Groups`;
   }
-  if (statReclaimableSpace) statReclaimableSpace.textContent = formatBytes(totalReclaimable);
+  if (statReclaimableSpace) statReclaimableSpace.textContent = formatBytes(displayedReclaimable);
   if (statHealthScore) statHealthScore.textContent = caseData.healthScore ? `${caseData.healthScore}%` : '—';
 
   const elSafeDeleteText = document.getElementById('btnTopSafeDeleteText');
@@ -805,7 +821,9 @@ function renderDuplicatesLocker() {
   if (scanIsActive) {
     const pending = document.createElement('div');
     pending.className = 'tab-inline-pending';
-    pending.textContent = 'Exact duplicate verification is still running. The previous evidence remains available after this scan completes.';
+    pending.textContent = caseData.duplicates?.length
+      ? 'Live exact duplicate groups are ready to review while verification continues.'
+      : 'Exact duplicate verification is starting. Verified groups will appear here while the scan continues.';
     duplicatesListContainer.appendChild(pending);
   }
 

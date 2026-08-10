@@ -55,6 +55,16 @@ def scan_is_cancelled(scan_id):
         state = ACTIVE_SCANS.get(scan_id)
         return bool(state and state['cancel_event'].is_set())
 
+
+def progressive_duplicate_reclaimable(groups):
+    """Estimate bytes recoverable by retaining one copy from each exact group."""
+    total = 0
+    for group in groups or []:
+        size = int(group.get('sizeBytes') or 0)
+        count = int(group.get('fileCount') or len(group.get('files') or []))
+        total += max(0, count - 1) * size
+    return total
+
 def safe_getsize(fpath):
     try:
         if os.path.islink(fpath):
@@ -1283,6 +1293,17 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
                             for path, mtime in identical_items
                         ]
                     })
+                    # Publish verified groups as they arrive so the UI can show
+                    # useful review targets before the full scan completes.
+                    update_scan_progress(
+                        scan_id,
+                        phase='grouping',
+                        filesScanned=total_files,
+                        duplicateGroupsFound=duplicate_groups_found,
+                        duplicatePreview=duplicates_list,
+                        progressiveReclaimableBytes=progressive_duplicate_reclaimable(duplicates_list),
+                        directoriesScanned=directories_scanned,
+                    )
         all_scanned_items = [entry[2] for entry in sorted(candidate_heap, reverse=True)]
         hogs = [entry[2] for entry in sorted(hog_heap, reverse=True)[:10]]
     finally:
