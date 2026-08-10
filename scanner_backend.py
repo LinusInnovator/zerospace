@@ -78,6 +78,37 @@ def safe_dir_size(dpath):
         pass
     return total
 
+def normalize_compression_settings(raw):
+    raw = raw if isinstance(raw, dict) else {}
+    try:
+        confidence = max(50, min(100, int(raw.get('confidence', 95))))
+    except (TypeError, ValueError):
+        confidence = 95
+    try:
+        min_savings = max(0, int(raw.get('minSavingsBytes', 1024 * 1024)))
+    except (TypeError, ValueError):
+        min_savings = 1024 * 1024
+    try:
+        max_file = max(1, int(raw.get('maxFileBytes', 10 * 1024 ** 3)))
+    except (TypeError, ValueError):
+        max_file = 10 * 1024 ** 3
+    extensions = raw.get('excludedExtensions', [])
+    excluded_paths = raw.get('excludedPaths', [])
+    if not isinstance(extensions, list):
+        extensions = []
+    if not isinstance(excluded_paths, list):
+        excluded_paths = []
+    return {
+        'mode': raw.get('mode') if raw.get('mode') in {'manual', 'automatic'} else 'manual',
+        'confidence': confidence,
+        'minSavingsBytes': min_savings,
+        'maxFileBytes': max_file,
+        'excludedExtensions': [str(item).lower().lstrip('.') for item in extensions if isinstance(item, str)][:100],
+        'excludedPaths': [os.path.realpath(os.path.abspath(os.path.expanduser(item))) for item in excluded_paths if isinstance(item, str)][:100],
+        'archivePath': str(raw.get('archivePath', '~/Volumes/NAS_Storage/Archive'))[:1024],
+        'requireConfirmation': raw.get('requireConfirmation') is not False
+    }
+
 class RealHDScannerBackend(SimpleHTTPRequestHandler):
     """Multi-threaded REST API request handler for storage intelligence."""
     def log_message(self, format, *args):
@@ -193,6 +224,7 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
 
         force_refresh = params.get('refresh', ['0'])[0] == '1'
         scan_id = params.get('scan_id', [''])[0][:80]
+        scan_global_caches = params.get('global_caches', ['0'])[0] == '1'
         try:
             max_age = max(0, min(3600, int(params.get('max_age', [DEFAULT_SNAPSHOT_MAX_AGE])[0])))
         except (TypeError, ValueError):
@@ -201,7 +233,7 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
         now = time.time()
         with SCAN_CACHE_LOCK:
             cached = SCAN_CACHE.get(target_path)
-        if not force_refresh and cached and now - cached['created_at'] <= max_age:
+        if not force_refresh and cached and cached.get('scan_global_caches', False) == scan_global_caches and now - cached['created_at'] <= max_age:
             scan_results = dict(cached['result'])
             scan_results['snapshot'] = {
                 'createdAt': cached['created_at'],
@@ -220,7 +252,7 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
                     'cancel_event': threading.Event(),
                 }
         try:
-            scan_results = run_real_hd_audit(target_path, scan_id=scan_id)
+            scan_results = run_real_hd_audit(target_path, scan_id=scan_id, scan_global_caches=scan_global_caches)
         except Exception:
             self.log_error("Scan failed for %s", target_path)
             if scan_id:
@@ -238,7 +270,7 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
             if len(SCAN_CACHE) >= MAX_SNAPSHOT_ENTRIES and target_path not in SCAN_CACHE:
                 oldest_path = min(SCAN_CACHE, key=lambda key: SCAN_CACHE[key]['created_at'])
                 SCAN_CACHE.pop(oldest_path, None)
-            SCAN_CACHE[target_path] = {'created_at': created_at, 'result': scan_results}
+            SCAN_CACHE[target_path] = {'created_at': created_at, 'result': scan_results, 'scan_global_caches': scan_global_caches}
         scan_results = dict(scan_results)
         scan_results['snapshot'] = {
             'createdAt': created_at,
@@ -392,6 +424,7 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
                 self.send_json_response({"error": "Payload must be a JSON object"}, status=400)
                 return
             items = payload.get('items', [])
+            compression_settings = normalize_compression_settings(payload.get('settings'))
             if not isinstance(items, list):
                 self.send_json_response({"error": "Payload must contain an items array"}, status=400)
                 return
@@ -420,6 +453,14 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
                     executed_log.append(f"BLOCKED: Advanced action '{action}' is disabled in review-first mode")
                     continue
 
+                if action in {'compress', 'transparent_compress'}:
+                    if compression_settings['mode'] == 'automatic' and not item.get('confirmed'):
+                        executed_log.append('BLOCKED: Automatic compression requires an explicit per-file confirmation')
+                        continue
+                    if compression_settings['requireConfirmation'] and not item.get('confirmed'):
+                        executed_log.append('BLOCKED: Compression requires explicit confirmation')
+                        continue
+
                 if file_path and os.path.exists(file_path):
                     safe, msg = is_safe_file_path(file_path)
                     if not safe:
@@ -427,6 +468,27 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
                         continue
 
                     size = os.path.getsize(file_path) if os.path.isfile(file_path) else 0
+
+                    if action in {'compress', 'transparent_compress'}:
+                        suffixes = [part.lower().lstrip('.') for part in os.path.basename(file_path).split('.')[1:]]
+                        if any(ext in compression_settings['excludedExtensions'] for ext in suffixes):
+                            executed_log.append('BLOCKED: File extension is excluded from compression')
+                            continue
+                        real_file_path = os.path.realpath(file_path)
+                        if any(real_file_path == excluded or real_file_path.startswith(excluded + os.sep) for excluded in compression_settings['excludedPaths']):
+                            executed_log.append('BLOCKED: File is inside an excluded compression path')
+                            continue
+                        if size > compression_settings['maxFileBytes']:
+                            executed_log.append('BLOCKED: File exceeds the configured compression size limit')
+                            continue
+                        confidence = float(item.get('confidence', 100))
+                        expected_savings = int(item.get('expectedSavingsBytes', 0))
+                        if confidence < compression_settings['confidence']:
+                            executed_log.append('BLOCKED: File is below the configured confidence threshold')
+                            continue
+                        if expected_savings < compression_settings['minSavingsBytes']:
+                            executed_log.append('BLOCKED: Expected savings are below the configured minimum')
+                            continue
 
                     if action == 'delete':
                         if os.environ.get('ZEROSPACE_ALLOW_PERMANENT_DELETE') != '1':
@@ -474,7 +536,7 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
                             executed_log.append(f"Archived safely (original retained): {file_path} -> {archive_path}")
 
                     elif action == 'migrate':
-                        nas_dir = os.path.expanduser("~/Volumes/NAS_Storage/Archive")
+                        nas_dir = os.path.realpath(os.path.abspath(os.path.expanduser(compression_settings['archivePath'])))
                         os.makedirs(nas_dir, exist_ok=True)
                         dest = unique_destination(nas_dir, os.path.basename(file_path))
                         shutil.move(file_path, dest)
@@ -896,7 +958,7 @@ def query_apfs_spotlight_indexed_files(root_dir):
     return None
 
 
-def run_real_hd_audit(root_dir, scan_id=None):
+def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
     """Exhaustively enumerate accessible files with bounded in-memory state."""
     total_files = 0
     total_bytes_scanned = 0
@@ -1214,7 +1276,7 @@ def run_real_hd_audit(root_dir, scan_id=None):
         })
 
     xcode_derived_data = os.path.expanduser('~/Library/Developer/Xcode/DerivedData')
-    if os.environ.get('ZEROSPACE_SCAN_GLOBAL_CACHES') == '1' and os.path.exists(xcode_derived_data):
+    if scan_global_caches and os.path.exists(xcode_derived_data):
         try:
             xcode_size = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(xcode_derived_data) for f in fs if os.path.isfile(os.path.join(r, f)))
             if xcode_size > 0:
@@ -1234,7 +1296,7 @@ def run_real_hd_audit(root_dir, scan_id=None):
             pass
 
     cargo_cache = os.path.expanduser('~/.cargo/registry/cache')
-    if os.environ.get('ZEROSPACE_SCAN_GLOBAL_CACHES') == '1' and os.path.exists(cargo_cache):
+    if scan_global_caches and os.path.exists(cargo_cache):
         try:
             cargo_size = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(cargo_cache) for f in fs if os.path.isfile(os.path.join(r, f)))
             if cargo_size > 0:
@@ -1254,7 +1316,7 @@ def run_real_hd_audit(root_dir, scan_id=None):
             pass
 
     pip_cache = os.path.expanduser('~/Library/Caches/pip')
-    if os.environ.get('ZEROSPACE_SCAN_GLOBAL_CACHES') == '1' and os.path.exists(pip_cache):
+    if scan_global_caches and os.path.exists(pip_cache):
         try:
             pip_size = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(pip_cache) for f in fs if os.path.isfile(os.path.join(r, f)))
             if pip_size > 0:
@@ -1274,7 +1336,7 @@ def run_real_hd_audit(root_dir, scan_id=None):
             pass
 
     npm_cache = os.path.expanduser('~/.npm')
-    if os.environ.get('ZEROSPACE_SCAN_GLOBAL_CACHES') == '1' and os.path.exists(npm_cache):
+    if scan_global_caches and os.path.exists(npm_cache):
         try:
             npm_size = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(npm_cache) for f in fs if os.path.isfile(os.path.join(r, f)))
             if npm_size > 0:
@@ -1294,7 +1356,7 @@ def run_real_hd_audit(root_dir, scan_id=None):
             pass
 
     yarn_cache = os.path.expanduser('~/Library/Caches/Yarn')
-    if os.environ.get('ZEROSPACE_SCAN_GLOBAL_CACHES') == '1' and os.path.exists(yarn_cache):
+    if scan_global_caches and os.path.exists(yarn_cache):
         try:
             yarn_size = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(yarn_cache) for f in fs if os.path.isfile(os.path.join(r, f)))
             if yarn_size > 0:
@@ -1314,7 +1376,7 @@ def run_real_hd_audit(root_dir, scan_id=None):
             pass
 
     brew_cache = os.path.expanduser('~/Library/Caches/Homebrew')
-    if os.environ.get('ZEROSPACE_SCAN_GLOBAL_CACHES') == '1' and os.path.exists(brew_cache):
+    if scan_global_caches and os.path.exists(brew_cache):
         try:
             brew_size = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(brew_cache) for f in fs if os.path.isfile(os.path.join(r, f)))
             if brew_size > 0:
@@ -1334,7 +1396,7 @@ def run_real_hd_audit(root_dir, scan_id=None):
             pass
 
     user_logs = os.path.expanduser('~/Library/Logs')
-    if os.environ.get('ZEROSPACE_SCAN_GLOBAL_CACHES') == '1' and os.path.exists(user_logs):
+    if scan_global_caches and os.path.exists(user_logs):
         try:
             logs_size = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(user_logs) for f in fs if os.path.isfile(os.path.join(r, f)))
             if logs_size > 5 * 1024 * 1024:
@@ -1354,7 +1416,7 @@ def run_real_hd_audit(root_dir, scan_id=None):
             pass
 
     try:
-        if os.environ.get('ZEROSPACE_SCAN_GLOBAL_CACHES') != '1':
+        if not scan_global_caches:
             raise RuntimeError("global cache scan disabled")
         tm_output = subprocess.check_output(['tmutil', 'listlocalsnapshots', '/'], stderr=subprocess.DEVNULL, text=True)
         snapshots = [line.strip() for line in tm_output.splitlines() if line.strip()]

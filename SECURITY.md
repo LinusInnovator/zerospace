@@ -36,6 +36,10 @@ PROTECTED_SYSTEM_PATHS = {
 
 Any attempt to delete or move a protected path returns an immediate `BLOCKED: Protected system path is locked` error log and aborts execution.
 
+### 4. Compression policy
+
+Compression is disabled by default by the backend advanced-action gate. When enabled deliberately, the request policy is validated server-side: explicit confirmation, confidence and expected-savings thresholds, maximum file size, excluded extensions, and excluded paths are enforced before any file is rewritten. Browser preferences are convenience controls, not a security boundary.
+
 ---
 
 ## 🐛 Reporting a Vulnerability

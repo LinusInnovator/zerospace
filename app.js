@@ -247,6 +247,7 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
   let data = null;
   try {
     const params = new URLSearchParams({path, max_age: '600', scan_id: backendScanId});
+    if (appSettings.scanGlobalCaches === true) params.set('global_caches', '1');
     if (force) params.set('refresh', '1');
     const res = await fetch(`/api/scan?${params}`, {signal: controller.signal});
     data = await res.json();
@@ -336,7 +337,7 @@ async function executeRealCleanup() {
     const res = await fetch('/api/execute', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ items })
+    body: JSON.stringify({ items, settings: getCompressionSettings() })
     });
     const result = await res.json();
 
@@ -353,6 +354,7 @@ async function executeRealCleanup() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  loadAppSettings();
   initSidebarNav();
   renderAll();
   const initialWorkspace = await fetchSystemDrives();
@@ -1681,14 +1683,59 @@ window.toggleDaemonService = function() {
     });
 };
 
+const APP_SETTINGS_KEY = 'zerospace.preferences.v1';
 let appSettings = {
-  autoCompress: false,
+  compressionMode: 'manual',
+  compressionConfidence: 95,
+  compressionMinSavingsMb: 1,
+  compressionMaxFileGb: 10,
+  compressionExcludedExtensions: 'zip, tar.gz, tgz, mp4, mov, mkv, jpg, jpeg, png, heic, pdf',
+  compressionExcludedPaths: '~/Library',
+  compressionRequireConfirmation: true,
+  scanGlobalCaches: false,
   archivePath: '~/Volumes/NAS_Storage/Archive',
   menuBarCompanion: true
 };
 
+function loadAppSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(APP_SETTINGS_KEY) || '{}');
+    if (saved && typeof saved === 'object') appSettings = { ...appSettings, ...saved };
+  } catch (_error) {
+    showToast('Preferences could not be loaded; using safe defaults.', 'warning');
+  }
+  const fields = {
+    settingCompressionMode: appSettings.compressionMode,
+    settingCompressionConfidence: appSettings.compressionConfidence,
+    settingCompressionMinSavings: appSettings.compressionMinSavingsMb,
+    settingCompressionMaxFile: appSettings.compressionMaxFileGb,
+    settingCompressionExcludedExtensions: appSettings.compressionExcludedExtensions,
+    settingCompressionExcludedPaths: appSettings.compressionExcludedPaths,
+    settingArchivePath: appSettings.archivePath
+  };
+  Object.entries(fields).forEach(([id, value]) => { const el = document.getElementById(id); if (el) el.value = value; });
+  const confirmation = document.getElementById('settingCompressionConfirmation');
+  const globalCaches = document.getElementById('settingGlobalCaches');
+  if (confirmation) confirmation.checked = appSettings.compressionRequireConfirmation !== false;
+  if (globalCaches) globalCaches.checked = appSettings.scanGlobalCaches === true;
+}
+
+function getCompressionSettings() {
+  return {
+    mode: appSettings.compressionMode,
+    confidence: Math.max(50, Math.min(100, Number(appSettings.compressionConfidence) || 95)),
+    minSavingsBytes: Math.max(0, (Number(appSettings.compressionMinSavingsMb) || 1) * 1024 * 1024),
+    maxFileBytes: Math.max(1, (Number(appSettings.compressionMaxFileGb) || 10) * 1024 * 1024 * 1024),
+    excludedExtensions: String(appSettings.compressionExcludedExtensions || '').split(',').map(value => value.trim().toLowerCase()).filter(Boolean),
+    excludedPaths: String(appSettings.compressionExcludedPaths || '').split('\n').map(value => value.trim()).filter(Boolean),
+    archivePath: String(appSettings.archivePath || '~/Volumes/NAS_Storage/Archive'),
+    requireConfirmation: appSettings.compressionRequireConfirmation !== false
+  };
+}
+
 window.saveAppSetting = function(key, val) {
   appSettings[key] = val;
+  try { localStorage.setItem(APP_SETTINGS_KEY, JSON.stringify(appSettings)); } catch (_error) { /* local-only preference best effort */ }
   showToast(`Setting '${key}' updated`, 'info');
 };
 

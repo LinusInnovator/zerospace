@@ -25,6 +25,7 @@ It is an experimental, open-source developer tool—not a consumer Mac cleaner. 
 - **Big File Radar and treemap:** inspect large or stale files across the chosen storage scope.
 - **Finder integration:** reveal every candidate before taking action.
 - **Review-first cleanup:** nothing is selected automatically; normal removal moves items to `~/.Trash`.
+- **User-controlled policies:** local Settings persist compression mode, confidence/savings/size thresholds, excluded extensions and paths, confirmation requirements, archive destination, and optional global-cache analysis. Settings never bypass backend safety gates.
 - **Local reports:** export scan results as JSON or CSV.
 - **Protection Shield:** blocks mutations to macOS system and sensitive user paths.
 - **Fast reload snapshots:** page load reuses a server-memory snapshot for up to 10 minutes; **Scan Scope** always forces a fresh scan.
