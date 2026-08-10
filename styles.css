@@ -241,6 +241,32 @@ body {
 .local-first-notice i { color: var(--accent-emerald); font-size: 20px; }
 .local-first-notice strong { color: var(--text-main); }
 
+.scan-progress-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  margin: -14px 0 22px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--glass-border);
+  color: var(--text-muted);
+  font-family: var(--font-code);
+  font-size: 12px;
+}
+.scan-progress-strip #scanSnapshotStatus { flex: 1; overflow-wrap: anywhere; }
+#scanProgressDot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+.scan-progress-strip.is-scanning #scanProgressDot {
+  background: var(--primary);
+  box-shadow: 0 0 9px var(--primary);
+  animation: statusPulse 1s ease-in-out infinite;
+}
+
 /* 2026 Bento Grid 2.0 Layout System */
 .bento-grid-2026 {
   display: grid;

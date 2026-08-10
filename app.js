@@ -5,7 +5,7 @@
 const EMPTY_AUDIT = Object.freeze({
   totalFiles: 0,
   healthScore: 0,
-  aiInsight: "Choose a workspace and scan to inspect real local files. Nothing is selected or changed automatically.",
+  aiInsight: "Choose a storage scope and scan to inspect real local files. Nothing is selected or changed automatically.",
   duplicates: [], strategies: [], treemapNodes: [], topHogs: [],
   scannedItems: [], archaeologistStories: [], categoryBytes: {}
 });
@@ -13,6 +13,8 @@ const EMPTY_AUDIT = Object.freeze({
 let currentWorkload = "dev";
 let caseData = structuredClone(EMPTY_AUDIT);
 let activeScanId = 0;
+let activeScanController = null;
+let activeScanCancelledByUser = false;
 
 // DOM Elements
 const driveSelectPicker = document.getElementById('driveSelectPicker');
@@ -178,23 +180,32 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
   }
   const scanId = ++activeScanId;
   const snapshotStatus = document.getElementById('scanSnapshotStatus');
+  const progressStrip = document.querySelector('.scan-progress-strip');
+  const cancelButton = document.getElementById('btnCancelScan');
   const startedAt = Date.now();
+  if (activeScanController) activeScanController.abort();
   const controller = new AbortController();
+  activeScanController = controller;
+  activeScanCancelledByUser = false;
   const timeoutId = setTimeout(() => controller.abort(), 120000);
   const progressId = setInterval(() => {
     if (scanId === activeScanId && snapshotStatus) {
-      snapshotStatus.textContent = `Scanning ${path}… ${Math.floor((Date.now() - startedAt) / 1000)}s elapsed.`;
+      const seconds = Math.floor((Date.now() - startedAt) / 1000);
+      snapshotStatus.textContent = `Scanning ${path}… ${seconds}s elapsed. You can keep reviewing the previous snapshot.`;
+      if (dialHealthScore) dialHealthScore.textContent = `${seconds}s`;
     }
   }, 1000);
 
-  showToast(`${automatic ? 'Refreshing' : 'Inspecting'} agent workspace at ${path}...`, 'info');
-  if (snapshotStatus) snapshotStatus.textContent = `Scanning ${path}…`;
+  showToast(`${automatic ? 'Refreshing' : 'Inspecting'} storage scope at ${path}...`, 'info');
+  if (snapshotStatus) snapshotStatus.textContent = `Scanning ${path}… 0s elapsed. You can keep reviewing the previous snapshot.`;
+  if (progressStrip) progressStrip.classList.add('is-scanning');
+  if (cancelButton) cancelButton.hidden = false;
   btnRealDiskScan.disabled = true;
   btnSmartCareScan.disabled = true;
 
   if (dialSvg) dialSvg.classList.add('scanning');
   dialMeterCircle.style.strokeDashoffset = "450";
-  dialHealthScore.textContent = "...";
+  dialHealthScore.textContent = "0s";
 
   // Layer 1: Immediately render scanning skeletons so screen is NEVER black/empty!
   renderScanningSkeletons();
@@ -208,14 +219,22 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
   } catch (netErr) {
     if (scanId !== activeScanId) return;
     if (dialSvg) dialSvg.classList.remove('scanning');
-    const message = netErr.name === 'AbortError' ? 'Scan timed out after 120 seconds' : `Backend connection offline: ${netErr.message}`;
-    if (snapshotStatus) snapshotStatus.textContent = `${message}. Check the selected scope and restart the local service if needed.`;
+    const message = netErr.name === 'AbortError'
+      ? (activeScanCancelledByUser ? 'Scan cancelled' : 'Scan timed out after 120 seconds')
+      : `Backend connection offline: ${netErr.message}`;
+    if (snapshotStatus) snapshotStatus.textContent = activeScanCancelledByUser
+      ? 'Scan cancelled. The previous snapshot is still shown.'
+      : `${message}. The previous snapshot is still shown; check the selected scope or restart the local service.`;
+    renderAll();
     showToast(message, 'warning');
     return;
   } finally {
     clearTimeout(timeoutId);
     clearInterval(progressId);
     if (scanId === activeScanId) {
+      activeScanController = null;
+      if (progressStrip) progressStrip.classList.remove('is-scanning');
+      if (cancelButton) cancelButton.hidden = true;
       btnRealDiskScan.disabled = false;
       btnSmartCareScan.disabled = false;
     }
@@ -226,6 +245,7 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
 
   if (!data || data.error) {
     if (snapshotStatus) snapshotStatus.textContent = `Scan failed: ${data ? data.error : 'empty response'}.`;
+    renderAll();
     showToast(`Scan Error: ${data ? data.error : 'Empty response'}`, 'warning');
     return;
   }
@@ -236,11 +256,12 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
     const snapshot = data.snapshot || {};
     const snapshotDate = snapshot.createdAt ? new Date(snapshot.createdAt * 1000) : new Date();
     if (snapshotStatus) {
-      snapshotStatus.textContent = snapshot.fromCache
+      const limitNote = data.scanLimitReached ? ' Scan limit reached; choose a narrower scope for exhaustive results.' : '';
+      snapshotStatus.textContent = (snapshot.fromCache
         ? `Showing snapshot from ${snapshotDate.toLocaleTimeString()} (${Math.round(snapshot.ageSeconds || 0)}s old).`
-        : `Snapshot refreshed at ${snapshotDate.toLocaleTimeString()} in ${((Date.now() - startedAt) / 1000).toFixed(1)}s.`;
+        : `Snapshot refreshed at ${snapshotDate.toLocaleTimeString()} in ${((Date.now() - startedAt) / 1000).toFixed(1)}s.`) + limitNote;
     }
-    showToast(`Workspace scan complete: ${Array.isArray(data.duplicates) ? data.duplicates.length : 0} exact duplicate groups found.`, 'success');
+    showToast(`Storage scan complete: ${Array.isArray(data.duplicates) ? data.duplicates.length : 0} exact duplicate groups found.`, 'success');
   } catch (uiErr) {
     console.error("UI Render Exception:", uiErr);
     showToast(`UI Render Notice: ${uiErr.message}`, 'warning');
@@ -311,6 +332,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   btnRealDiskScan.addEventListener('click', () => runRealSystemDriveScan(scanPathInput.value, {force: true}));
   btnSmartCareScan.addEventListener('click', () => runRealSystemDriveScan(scanPathInput.value, {force: true}));
+  const btnCancelScan = document.getElementById('btnCancelScan');
+  if (btnCancelScan) btnCancelScan.addEventListener('click', () => {
+    activeScanCancelledByUser = true;
+    if (activeScanController) activeScanController.abort();
+  });
 
   btnToggleHud.addEventListener('click', () => {
     fetchRealSystemHud();
@@ -650,11 +676,10 @@ function recalculateStats() {
     elSafeDeleteText.textContent = `Review Selected (${formatBytes(dupBytes)})`;
   }
 
-  const health = caseData.healthScore || 0;
-  if (dialHealthScore) dialHealthScore.textContent = health ? `${health}%` : '—';
+  const indexedFiles = Number(caseData.totalFiles) || 0;
+  if (dialHealthScore) dialHealthScore.textContent = indexedFiles ? indexedFiles.toLocaleString() : '—';
   if (dialMeterCircle) {
-    const offset = 565 - (565 * (health / 100));
-    dialMeterCircle.style.strokeDashoffset = offset;
+    dialMeterCircle.style.strokeDashoffset = indexedFiles ? '140' : '565';
   }
 }
 
@@ -1339,7 +1364,7 @@ function renderArchaeologistStories() {
   const stories = caseData.archaeologistStories || [];
 
   if (stories.length === 0) {
-    container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 48px; grid-column: span 2;">Choose an agent workspace above and run a scan. Only real files found in that scope will appear here.</div>';
+    container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 48px; grid-column: span 2;">Choose a folder or whole-Mac scope above and run a scan. Only real files found in that scope will appear here.</div>';
     return;
   }
 

@@ -30,7 +30,7 @@
           <div class="sidebar-group-title">Overview</div>
           <a class="sidebar-item" data-tab="tabSmartCare">
             <i class="ph-duotone ph-sparkle sidebar-item-icon"></i>
-            <span>Workspace Scan</span>
+            <span>Storage Scan</span>
           </a>
           <a class="sidebar-item active" data-tab="tabArchaeologist">
             <i class="ph-duotone ph-compass sidebar-item-icon" style="color: #a855f7;"></i>
@@ -133,10 +133,15 @@
 
       <div class="local-first-notice" role="note">
         <i class="ph-duotone ph-shield-check" aria-hidden="true"></i>
-        <div><strong>Local and review-first.</strong> Files and scan results stay on this Mac. Nothing is changed automatically; selected files move to Trash by default. <span id="scanSnapshotStatus">Waiting for workspace snapshot…</span></div>
+        <div><strong>Local and review-first.</strong> Files and scan results stay on this Mac. Nothing is changed automatically; selected files move to Trash by default.</div>
+      </div>
+      <div class="scan-progress-strip" role="status" aria-live="polite">
+        <span id="scanProgressDot" aria-hidden="true"></span>
+        <span id="scanSnapshotStatus">Preparing the first storage snapshot…</span>
+        <button id="btnCancelScan" class="btn btn-secondary" type="button" hidden>Cancel scan</button>
       </div>
 
-      <!-- Section 1: Central Workspace Scan View -->
+      <!-- Section 1: Central Storage Scan View -->
       <div id="tabSmartCare" class="tab-panel">
         <!-- 2026 Asymmetrical Bento Grid 2.0 -->
         <div class="bento-grid-2026">
@@ -212,18 +217,18 @@
               </svg>
               <div class="dial-center-text">
                 <div id="dialHealthScore" class="dial-score">—</div>
-                <div class="dial-label">Workspace signal</div>
+                <div class="dial-label">Files indexed</div>
               </div>
             </div>
 
-            <h2 class="hero-title">Inspect Agent Workspace Debris</h2>
+            <h2 class="hero-title">Inspect Storage Clutter</h2>
             <p id="heroSubtitle" class="hero-subtitle">
-              Find abandoned experiments, repeated dependencies, build output, exact duplicates, and model files—without uploading your paths or results.
+              Find large and stale files, exact duplicates, downloads, archives, media, applications, caches, models, build output, and abandoned experiments.
             </p>
 
             <button id="btnSmartCareScan" class="btn-scan-main">
               <i class="ph-duotone ph-sparkle"></i>
-              <span>SCAN THIS WORKSPACE</span>
+              <span>SCAN THIS SCOPE</span>
             </button>
           </div>
 

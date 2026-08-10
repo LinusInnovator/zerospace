@@ -8,7 +8,9 @@
 [![Backend Dependencies](https://img.shields.io/badge/Backend-Python%20stdlib-ff007f.svg?style=for-the-badge)](#architecture)
 [![macOS Protected](https://img.shields.io/badge/System%20Shield-Protected-00f2fe.svg?style=for-the-badge&logo=apple&logoColor=white)](https://apple.com)
 
-Coding agents make experiments cheap: parallel worktrees, cloned projects, repeated dependencies, build output, model files, and forgotten prototypes accumulate quickly. **ZeroSpace** inspects a workspace, groups that debris, verifies exact duplicates with full-file SHA-256, and explains why an item may be worth reviewing.
+Coding agents make experiments cheap: parallel worktrees, cloned projects, repeated dependencies, build output, model files, and forgotten prototypes accumulate quickly. **ZeroSpace** inspects a chosen storage scope, surfaces general clutter, verifies exact duplicates with full-file SHA-256, and explains why an item may be worth reviewing.
+
+Agent-heavy developers are the intended audience, not a restriction on the scan. Every file reached in the selected scope participates in size, age, and exact-duplicate analysis; named categories such as dependencies, models, archives, and caches are highlights rather than an allowlist.
 
 It is an experimental, open-source developer tool—not a consumer Mac cleaner. Scans and paths stay local, nothing is changed automatically, and normal cleanup moves reviewed items to Trash.
 
@@ -20,7 +22,7 @@ It is an experimental, open-source developer tool—not a consumer Mac cleaner. 
 
 - **Digital Archaeologist:** rule-based explanations for repeated dependencies, caches, checkpoints, generated assets, installers, and forgotten experiments.
 - **Exact duplicate evidence:** size and 8 KB header prefilter followed by full-file SHA-256 verification.
-- **Big File Radar and treemap:** inspect large or stale files by workspace category.
+- **Big File Radar and treemap:** inspect large or stale files across the chosen storage scope.
 - **Finder integration:** reveal every candidate before taking action.
 - **Review-first cleanup:** nothing is selected automatically; normal removal moves items to `~/.Trash`.
 - **Local reports:** export scan results as JSON or CSV.

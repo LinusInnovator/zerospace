@@ -460,7 +460,10 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):
+            self.log_message("Client disconnected before response completed")
 
 
 def is_safe_scan_path(path):
@@ -819,6 +822,7 @@ def query_apfs_spotlight_indexed_files(root_dir):
 def run_real_hd_audit(root_dir, max_files=25000):
     """Blazing-Fast Dual-Engine Hard Drive Audit & Live Verification Engine"""
     total_files = 0
+    scan_limit_reached = False
     size_map = {}
     seen_paths = set()
     hogs = []
@@ -843,10 +847,13 @@ def run_real_hd_audit(root_dir, max_files=25000):
         used_disk_bytes = int(1.91 * 1024 * 1024 * 1024 * 1024)
         free_disk_bytes = total_disk_bytes - used_disk_bytes
 
-    print(f"🕵️ Fast Dual-Engine Audit Scanning: {root_dir}...")
+    # Whole-Mac mode focuses its bounded file walk on the current user's data.
+    # Disk-capacity metrics still represent the selected root volume.
+    audit_root = os.path.expanduser('~') if root_dir == '/' else root_dir
+    print(f"🕵️ Fast Dual-Engine Audit Scanning: {root_dir} (files: {audit_root})...")
 
     # Engine A: Try APFS Native Spotlight Metadata Indexer first
-    spotlight_paths = query_apfs_spotlight_indexed_files(root_dir)
+    spotlight_paths = None if root_dir == '/' else query_apfs_spotlight_indexed_files(audit_root)
     if spotlight_paths and len(spotlight_paths) > 0:
         print(f"⚡ APFS Native B-Tree Spotlight Indexer matched {len(spotlight_paths)} items instantly!")
         for fpath in spotlight_paths:
@@ -950,7 +957,7 @@ def run_real_hd_audit(root_dir, max_files=25000):
                 continue
 
     # Fast Directory Walk with permission error suppression
-    for dirpath, dirnames, filenames in os.walk(root_dir, onerror=lambda e: None):
+    for dirpath, dirnames, filenames in os.walk(audit_root, onerror=lambda e: None):
         # Skip hidden git and cache dirs to prevent freezing
         dirnames[:] = [d for d in dirnames if d not in ['.git', '.venv', 'venv', 'Library', 'Caches', 'Containers', 'Group Containers']]
 
@@ -989,14 +996,15 @@ def run_real_hd_audit(root_dir, max_files=25000):
             dirnames.remove('__pycache__')
 
         for fname in filenames:
+            if total_files >= max_files:
+                scan_limit_reached = True
+                break
             fpath = os.path.join(dirpath, fname)
             real_fpath = os.path.realpath(fpath)
             if real_fpath in seen_paths:
                 continue
             seen_paths.add(real_fpath)
             total_files += 1
-            if total_files > max_files:
-                break
             lower_fname = fname.lower()
 
             if fname == '.DS_Store':
@@ -1076,7 +1084,7 @@ def run_real_hd_audit(root_dir, max_files=25000):
             except Exception:
                 continue
 
-        if total_files > max_files:
+        if scan_limit_reached:
             break
 
     # 2-Pass Duplicate Hashing (Fast Header -> SHA256)
@@ -1337,6 +1345,7 @@ def run_real_hd_audit(root_dir, max_files=25000):
 
     return {
         "totalFiles": total_files,
+        "scanLimitReached": scan_limit_reached,
         "healthScore": None,
         "archaeologistStories": archaeologist_stories,
         "duplicates": duplicates_list,
