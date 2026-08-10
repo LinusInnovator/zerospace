@@ -22,6 +22,9 @@ import subprocess
 import argparse
 import time
 import threading
+import heapq
+import sqlite3
+import tempfile
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -32,6 +35,25 @@ DEFAULT_SNAPSHOT_MAX_AGE = 10 * 60
 MAX_SNAPSHOT_ENTRIES = 4
 SCAN_CACHE = {}
 SCAN_CACHE_LOCK = threading.Lock()
+ACTIVE_SCANS = {}
+ACTIVE_SCANS_LOCK = threading.Lock()
+MAX_UI_CANDIDATES = 500
+MAX_TOP_HOGS = 100
+
+def update_scan_progress(scan_id, **updates):
+    if not scan_id:
+        return
+    with ACTIVE_SCANS_LOCK:
+        state = ACTIVE_SCANS.get(scan_id)
+        if state is not None:
+            state.update(updates)
+
+def scan_is_cancelled(scan_id):
+    if not scan_id:
+        return False
+    with ACTIVE_SCANS_LOCK:
+        state = ACTIVE_SCANS.get(scan_id)
+        return bool(state and state['cancel_event'].is_set())
 
 def safe_getsize(fpath):
     try:
@@ -104,6 +126,10 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         if parsed.path == '/api/scan':
             self.handle_api_scan(parsed)
+        elif parsed.path == '/api/scan_progress':
+            self.handle_api_scan_progress(parsed)
+        elif parsed.path == '/api/scan_cancel':
+            self.handle_api_scan_cancel(parsed)
         elif parsed.path == '/api/drives':
             self.handle_api_drives()
         elif parsed.path == '/api/system_hud':
@@ -161,6 +187,7 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
             return
 
         force_refresh = params.get('refresh', ['0'])[0] == '1'
+        scan_id = params.get('scan_id', [''])[0][:80]
         try:
             max_age = max(0, min(3600, int(params.get('max_age', [DEFAULT_SNAPSHOT_MAX_AGE])[0])))
         except (TypeError, ValueError):
@@ -179,7 +206,28 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
             self.send_json_response(scan_results)
             return
 
-        scan_results = run_real_hd_audit(target_path)
+        if scan_id:
+            with ACTIVE_SCANS_LOCK:
+                ACTIVE_SCANS[scan_id] = {
+                    'scanId': scan_id, 'phase': 'enumerating', 'filesScanned': 0,
+                    'directoriesScanned': 0, 'skippedDirectories': 0,
+                    'currentPath': target_path, 'startedAt': time.time(),
+                    'cancel_event': threading.Event(),
+                }
+        try:
+            scan_results = run_real_hd_audit(target_path, scan_id=scan_id)
+        except Exception:
+            self.log_error("Scan failed for %s", target_path)
+            if scan_id:
+                with ACTIVE_SCANS_LOCK:
+                    ACTIVE_SCANS.pop(scan_id, None)
+            self.send_json_response({"error": "The scan could not be completed. The selected files were not changed."}, status=500)
+            return
+        if scan_results.get('cancelled'):
+            self.send_json_response(scan_results)
+            with ACTIVE_SCANS_LOCK:
+                ACTIVE_SCANS.pop(scan_id, None)
+            return
         created_at = time.time()
         with SCAN_CACHE_LOCK:
             if len(SCAN_CACHE) >= MAX_SNAPSHOT_ENTRIES and target_path not in SCAN_CACHE:
@@ -193,6 +241,30 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
             'fromCache': False,
         }
         self.send_json_response(scan_results)
+        if scan_id:
+            with ACTIVE_SCANS_LOCK:
+                ACTIVE_SCANS.pop(scan_id, None)
+
+    def handle_api_scan_progress(self, parsed):
+        scan_id = parse_qs(parsed.query).get('scan_id', [''])[0][:80]
+        with ACTIVE_SCANS_LOCK:
+            state = ACTIVE_SCANS.get(scan_id)
+            if not state:
+                payload = {'scanId': scan_id, 'phase': 'unknown'}
+            else:
+                payload = {key: value for key, value in state.items() if key != 'cancel_event'}
+        self.send_json_response(payload)
+
+    def handle_api_scan_cancel(self, parsed):
+        scan_id = parse_qs(parsed.query).get('scan_id', [''])[0][:80]
+        cancelled = False
+        with ACTIVE_SCANS_LOCK:
+            state = ACTIVE_SCANS.get(scan_id)
+            if state:
+                state['cancel_event'].set()
+                state['phase'] = 'cancelling'
+                cancelled = True
+        self.send_json_response({'scanId': scan_id, 'cancelled': cancelled})
 
     def handle_api_drives(self):
         user_home = os.path.expanduser('~')
@@ -819,14 +891,16 @@ def query_apfs_spotlight_indexed_files(root_dir):
     return None
 
 
-def run_real_hd_audit(root_dir, max_files=25000):
-    """Blazing-Fast Dual-Engine Hard Drive Audit & Live Verification Engine"""
+def run_real_hd_audit(root_dir, scan_id=None):
+    """Exhaustively enumerate accessible files with bounded in-memory state."""
     total_files = 0
-    scan_limit_reached = False
-    size_map = {}
-    seen_paths = set()
-    hogs = []
-    all_scanned_items = []
+    total_bytes_scanned = 0
+    directories_scanned = 0
+    skipped_directories = 0
+    skipped_files = 0
+    candidate_heap = []
+    hog_heap = []
+    heap_sequence = 0
 
     node_modules_bytes = 0
     pycache_bytes = 0
@@ -847,291 +921,209 @@ def run_real_hd_audit(root_dir, max_files=25000):
         used_disk_bytes = int(1.91 * 1024 * 1024 * 1024 * 1024)
         free_disk_bytes = total_disk_bytes - used_disk_bytes
 
-    # Whole-Mac mode focuses its bounded file walk on the current user's data.
-    # Disk-capacity metrics still represent the selected root volume.
-    audit_root = os.path.expanduser('~') if root_dir == '/' else root_dir
-    print(f"🕵️ Fast Dual-Engine Audit Scanning: {root_dir} (files: {audit_root})...")
+    audit_root = root_dir
+    print(f"🕵️ Exhaustive bounded-memory audit scanning: {audit_root}...")
 
-    # Engine A: Try APFS Native Spotlight Metadata Indexer first
-    spotlight_paths = None if root_dir == '/' else query_apfs_spotlight_indexed_files(audit_root)
-    if spotlight_paths and len(spotlight_paths) > 0:
-        print(f"⚡ APFS Native B-Tree Spotlight Indexer matched {len(spotlight_paths)} items instantly!")
-        for fpath in spotlight_paths:
-            if not os.path.exists(fpath):
-                continue
-            fpath = os.path.realpath(fpath)
-            if fpath in seen_paths:
-                continue
-            seen_paths.add(fpath)
-            total_files += 1
-            fname = os.path.basename(fpath)
-            lower_fname = fname.lower()
+    database_fd, database_path = tempfile.mkstemp(prefix='zerospace-scan-', suffix='.sqlite3')
+    os.close(database_fd)
+    database = sqlite3.connect(database_path)
+    database.execute('PRAGMA journal_mode=OFF')
+    database.execute('PRAGMA synchronous=OFF')
+    database.execute('CREATE TABLE files (size INTEGER, path TEXT, mtime TEXT)')
+    pending_rows = []
 
-            try:
-                if os.path.isdir(fpath):
-                    if fname == 'node_modules':
-                        nm_sz = safe_dir_size(fpath)
-                        node_modules_bytes += nm_sz
-                        item_obj = {
-                            "type": "📦 Folder",
-                            "path": fpath,
-                            "size": format_bytes_py(nm_sz),
-                            "sizeBytes": nm_sz,
-                            "category": "Dev Dependencies (node_modules)"
-                        }
-                        hogs.append(item_obj)
-                        all_scanned_items.append(item_obj)
-                    elif fname == '__pycache__':
-                        pyc_sz = safe_dir_size(fpath)
-                        pycache_bytes += pyc_sz
-                        all_scanned_items.append({
-                            "type": "⚡ Bytecode",
-                            "path": fpath,
-                            "size": format_bytes_py(pyc_sz),
-                            "sizeBytes": pyc_sz,
-                            "category": "Python __pycache__ Bytecode"
-                        })
-                elif os.path.isfile(fpath):
-                    sz = safe_getsize(fpath)
+    def record_ui_item(item, target_heap, limit):
+        nonlocal heap_sequence
+        heap_sequence += 1
+        entry = (item['sizeBytes'], heap_sequence, item)
+        if len(target_heap) < limit:
+            heapq.heappush(target_heap, entry)
+        elif entry[0] > target_heap[0][0]:
+            heapq.heapreplace(target_heap, entry)
 
-                    if fname == '.DS_Store':
-                        ds_store_bytes += sz
-                        all_scanned_items.append({
-                            "type": "📄 System",
-                            "path": fpath,
-                            "size": format_bytes_py(sz),
-                            "sizeBytes": sz,
-                            "category": "macOS .DS_Store Clutter"
-                        })
-                    elif lower_fname.endswith(('.safetensors', '.ckpt', '.pt', '.bin', '.gguf')):
-                        ai_models_bytes += sz
-                        item_obj = {
-                            "type": "🧠 Model",
-                            "path": fpath,
-                            "size": format_bytes_py(sz),
-                            "sizeBytes": sz,
-                            "category": "AI Models & Safetensors"
-                        }
-                        hogs.append(item_obj)
-                        all_scanned_items.append(item_obj)
-                    elif lower_fname.endswith(('.vmdk', '.iso', '.qcow2', '.vdi')):
-                        vm_bytes += sz
-                        item_obj = {
-                            "type": "💻 VM Image",
-                            "path": fpath,
-                            "size": format_bytes_py(sz),
-                            "sizeBytes": sz,
-                            "category": "VM Images (.vmdk / .iso)"
-                        }
-                        hogs.append(item_obj)
-                        all_scanned_items.append(item_obj)
-                    elif lower_fname.endswith(('.mp4', '.mov', '.mkv', '.avi', '.webm')):
-                        media_bytes += sz
-                        all_scanned_items.append({
-                            "type": "🎬 Media",
-                            "path": fpath,
-                            "size": format_bytes_py(sz),
-                            "sizeBytes": sz,
-                            "category": "4K Video & Media Renders"
-                        })
-                    elif lower_fname.endswith(('.zip', '.tar.gz', '.tgz', '.sql', '.dump', '.db')):
-                        archive_bytes += sz
-                        all_scanned_items.append({
-                            "type": "🗜️ Archive",
-                            "path": fpath,
-                            "size": format_bytes_py(sz),
-                            "sizeBytes": sz,
-                            "category": "Archives & Database Dumps"
-                        })
+    def walk_error(_error):
+        nonlocal skipped_directories
+        skipped_directories += 1
 
-                    if sz > 20 * 1024:
-                        if sz not in size_map:
-                            size_map[sz] = []
-                        import datetime
-                        try:
-                            mtime_str = datetime.date.fromtimestamp(os.path.getmtime(fpath)).isoformat()
-                        except Exception:
-                            mtime_str = datetime.date.today().isoformat()
-                        size_map[sz].append({"path": fpath, "mtime": mtime_str, "size": sz})
-            except Exception:
-                continue
-
-    # Fast Directory Walk with permission error suppression
-    for dirpath, dirnames, filenames in os.walk(audit_root, onerror=lambda e: None):
-        # Skip hidden git and cache dirs to prevent freezing
-        dirnames[:] = [d for d in dirnames if d not in ['.git', '.venv', 'venv', 'Library', 'Caches', 'Containers', 'Group Containers']]
-
-        if 'node_modules' in dirnames:
-            nm_path = os.path.join(dirpath, 'node_modules')
-            real_nm_path = os.path.realpath(nm_path)
-            if real_nm_path not in seen_paths:
-                seen_paths.add(real_nm_path)
-                nm_size = safe_dir_size(nm_path)
-                node_modules_bytes += nm_size
-                item_obj = {
-                    "type": "📦 Folder",
-                    "path": nm_path,
-                    "size": format_bytes_py(nm_size),
-                    "sizeBytes": nm_size,
-                    "category": "Dev Dependencies (node_modules)"
-                }
-                hogs.append(item_obj)
-                all_scanned_items.append(item_obj)
-            dirnames.remove('node_modules')
-
-        if '__pycache__' in dirnames:
-            pyc_path = os.path.join(dirpath, '__pycache__')
-            real_pyc_path = os.path.realpath(pyc_path)
-            if real_pyc_path not in seen_paths:
-                seen_paths.add(real_pyc_path)
-                pyc_size = safe_dir_size(pyc_path)
-                pycache_bytes += pyc_size
-                all_scanned_items.append({
-                    "type": "⚡ Bytecode",
-                    "path": pyc_path,
-                    "size": format_bytes_py(pyc_size),
-                    "sizeBytes": pyc_size,
-                    "category": "Python __pycache__ Bytecode"
-                })
-            dirnames.remove('__pycache__')
-
-        for fname in filenames:
-            if total_files >= max_files:
-                scan_limit_reached = True
+    cancelled = False
+    try:
+        for dirpath, dirnames, filenames in os.walk(audit_root, topdown=True, followlinks=False, onerror=walk_error):
+            if scan_is_cancelled(scan_id):
+                cancelled = True
                 break
-            fpath = os.path.join(dirpath, fname)
-            real_fpath = os.path.realpath(fpath)
-            if real_fpath in seen_paths:
-                continue
-            seen_paths.add(real_fpath)
-            total_files += 1
-            lower_fname = fname.lower()
-
-            if fname == '.DS_Store':
-                ds_sz = safe_getsize(fpath)
-                ds_store_bytes += ds_sz
-                all_scanned_items.append({
-                    "type": "📄 System",
-                    "path": fpath,
-                    "size": format_bytes_py(ds_sz),
-                    "sizeBytes": ds_sz,
-                    "category": "macOS .DS_Store Clutter"
-                })
-
-            try:
-                size = safe_getsize(fpath)
-
-                # Categorize file bytes
-                if lower_fname.endswith(('.safetensors', '.ckpt', '.pt', '.bin', '.gguf')):
+            directories_scanned += 1
+            # A root-volume scan should not silently traverse other mounted volumes.
+            if audit_root == '/' and dirpath == '/':
+                dirnames[:] = [name for name in dirnames if name not in {'Volumes', 'dev', 'net', 'home'}]
+            elif audit_root == '/' and dirpath == '/System/Volumes':
+                # The Data volume is already exposed through root firmlinks; walking it
+                # again would double-count user and application data.
+                dirnames[:] = [name for name in dirnames if name != 'Data']
+            path_parts = set(os.path.normpath(dirpath).split(os.sep))
+            in_node_modules = 'node_modules' in path_parts
+            in_pycache = '__pycache__' in path_parts
+            for fname in filenames:
+                if scan_is_cancelled(scan_id):
+                    cancelled = True
+                    break
+                fpath = os.path.join(dirpath, fname)
+                if os.path.islink(fpath):
+                    continue
+                try:
+                    stat = os.stat(fpath, follow_symlinks=False)
+                    size = stat.st_size
+                except (OSError, PermissionError):
+                    skipped_files += 1
+                    continue
+                total_files += 1
+                total_bytes_scanned += size
+                lower_fname = fname.lower()
+                category = None
+                item_type = get_file_type_icon(fname)
+                if in_node_modules:
+                    node_modules_bytes += size
+                    category, item_type = 'Dev Dependencies (node_modules)', '📦 Dependency'
+                elif in_pycache or lower_fname.endswith('.pyc'):
+                    pycache_bytes += size
+                    category, item_type = 'Python __pycache__ Bytecode', '⚡ Bytecode'
+                elif fname == '.DS_Store':
+                    ds_store_bytes += size
+                    category, item_type = 'macOS .DS_Store Clutter', '📄 System'
+                elif lower_fname.endswith(('.safetensors', '.ckpt', '.pt', '.bin', '.gguf')):
                     ai_models_bytes += size
-                    all_scanned_items.append({
-                        "type": "🧠 Model",
-                        "path": fpath,
-                        "size": format_bytes_py(size),
-                        "sizeBytes": size,
-                        "category": "AI Models & Safetensors"
-                    })
+                    category, item_type = 'AI Models & Safetensors', '🧠 Model'
                 elif lower_fname.endswith(('.vmdk', '.iso', '.qcow2', '.vdi')):
                     vm_bytes += size
-                    all_scanned_items.append({
-                        "type": "💻 VM Image",
-                        "path": fpath,
-                        "size": format_bytes_py(size),
-                        "sizeBytes": size,
-                        "category": "VM Images (.vmdk / .iso)"
-                    })
+                    category, item_type = 'VM Images (.vmdk / .iso)', '💻 VM Image'
                 elif lower_fname.endswith(('.mp4', '.mov', '.mkv', '.avi', '.webm')):
                     media_bytes += size
-                    all_scanned_items.append({
-                        "type": "🎬 Media",
-                        "path": fpath,
-                        "size": format_bytes_py(size),
-                        "sizeBytes": size,
-                        "category": "4K Video & Media Renders"
-                    })
-                elif lower_fname.endswith(('.zip', '.tar.gz', '.tgz', '.sql', '.dump', '.db')):
+                    category, item_type = '4K Video & Media Renders', '🎬 Media'
+                elif lower_fname.endswith(('.zip', '.tar.gz', '.tgz', '.sql', '.dump', '.db', '.dmg', '.pkg')):
                     archive_bytes += size
-                    all_scanned_items.append({
-                        "type": "🗜️ Archive",
-                        "path": fpath,
-                        "size": format_bytes_py(size),
-                        "sizeBytes": size,
-                        "category": "Archives & Database Dumps"
-                    })
+                    category, item_type = 'Archives & Database Dumps', '🗜️ Archive'
 
-                if size > 20 * 1024: # Audit files > 20KB
-                    if size not in size_map:
-                        size_map[size] = []
-                    
+                item = {
+                    'type': item_type, 'path': fpath, 'size': format_bytes_py(size),
+                    'sizeBytes': size, 'category': category or categorize_file_extension(fname)
+                }
+                if category:
+                    record_ui_item(item, candidate_heap, MAX_UI_CANDIDATES)
+                if size > 10 * 1024 * 1024:
+                    record_ui_item(item, hog_heap, MAX_TOP_HOGS)
+                if size > 20 * 1024:
                     import datetime
-                    mtime = os.path.getmtime(fpath)
-                    mtime_str = datetime.date.fromtimestamp(mtime).isoformat()
+                    mtime = datetime.date.fromtimestamp(stat.st_mtime).isoformat()
+                    pending_rows.append((size, fpath, mtime))
+                    if len(pending_rows) >= 2000:
+                        database.executemany('INSERT INTO files VALUES (?, ?, ?)', pending_rows)
+                        pending_rows.clear()
+                if total_files % 500 == 0:
+                    update_scan_progress(scan_id, phase='enumerating', filesScanned=total_files,
+                                         directoriesScanned=directories_scanned,
+                                         skippedDirectories=skipped_directories,
+                                         skippedFiles=skipped_files, currentPath=dirpath)
+            if cancelled:
+                break
+        if pending_rows:
+            database.executemany('INSERT INTO files VALUES (?, ?, ?)', pending_rows)
+        database.commit()
 
-                    size_map[size].append({
-                        "path": fpath,
-                        "mtime": mtime_str,
-                        "size": size
-                    })
+        duplicates_list = []
+        duplicate_groups_found = 0
+        if not cancelled:
+            update_scan_progress(scan_id, phase='indexing', filesScanned=total_files,
+                                 directoriesScanned=directories_scanned,
+                                 skippedDirectories=skipped_directories, currentPath=audit_root)
+            database.execute('CREATE INDEX files_by_size ON files(size)')
+            database.execute('CREATE TABLE fingerprints (size INTEGER, header TEXT, path TEXT, mtime TEXT)')
+            duplicate_sizes = database.execute('SELECT size FROM files GROUP BY size HAVING COUNT(*) > 1')
+            for (size,) in duplicate_sizes:
+                if scan_is_cancelled(scan_id):
+                    cancelled = True
+                    break
+                fingerprint_rows = []
+                for path, mtime in database.execute('SELECT path, mtime FROM files WHERE size = ?', (size,)):
+                    header_hash = get_fast_header_hash(path)
+                    if header_hash:
+                        fingerprint_rows.append((size, header_hash, path, mtime))
+                    if len(fingerprint_rows) >= 1000:
+                        database.executemany('INSERT INTO fingerprints VALUES (?, ?, ?, ?)', fingerprint_rows)
+                        fingerprint_rows.clear()
+                if fingerprint_rows:
+                    database.executemany('INSERT INTO fingerprints VALUES (?, ?, ?, ?)', fingerprint_rows)
+            database.commit()
 
-                    if size > 10 * 1024 * 1024:
-                        hogs.append({
-                            "type": get_file_type_icon(fname),
-                            "path": fpath,
-                            "size": format_bytes_py(size),
-                            "sizeBytes": size,
-                            "category": categorize_file_extension(fname)
-                        })
-            except Exception:
-                continue
-
-        if scan_limit_reached:
-            break
-
-    # 2-Pass Duplicate Hashing (Fast Header -> SHA256)
-    duplicates_list = []
-
-    for size, file_list in size_map.items():
-        if len(file_list) > 1:
-            # Pass 1: 8KB Header Hash
-            header_map = {}
-            for item in file_list:
-                hdr_hash = get_fast_header_hash(item['path'])
-                if hdr_hash:
-                    if hdr_hash not in header_map:
-                        header_map[hdr_hash] = []
-                    header_map[hdr_hash].append(item)
-
-            # Pass 2: Full SHA-256 for matching headers
-            for hdr, matched_items in header_map.items():
-                if len(matched_items) > 1:
-                    sha_map = {}
-                    for item in matched_items:
-                        sha = get_file_sha256(item['path'])
+            if not cancelled:
+                database.execute('CREATE INDEX fingerprints_by_header ON fingerprints(size, header)')
+                database.execute('CREATE TABLE exact_hashes (size INTEGER, sha TEXT, path TEXT, mtime TEXT)')
+                header_groups = database.execute(
+                    'SELECT size, header FROM fingerprints GROUP BY size, header HAVING COUNT(*) > 1'
+                )
+                for size, header_hash in header_groups:
+                    if scan_is_cancelled(scan_id):
+                        cancelled = True
+                        break
+                    exact_rows = []
+                    rows = database.execute(
+                        'SELECT path, mtime FROM fingerprints WHERE size = ? AND header = ?',
+                        (size, header_hash)
+                    )
+                    for path, mtime in rows:
+                        sha = get_file_sha256(path)
                         if sha:
-                            sha_map.setdefault(sha, []).append(item)
-                    for sha, identical_items in sha_map.items():
-                        if len(identical_items) < 2:
-                            continue
-                        fname = os.path.basename(identical_items[0]['path'])
-                        duplicates_list.append({
-                            "hash": sha,
-                            "name": fname,
-                            "sizeBytes": size,
-                            "aiCategory": categorize_file_extension(fname),
-                            "confidence": "Exact content match (SHA-256)",
-                            "files": [
-                                {
-                                    "path": item['path'],
-                                    "mtime": item['mtime'],
-                                    "selected": False,
-                                    "action": "trash"
-                                } for item in identical_items
-                            ]
-                        })
+                            exact_rows.append((size, sha, path, mtime))
+                    if exact_rows:
+                        database.executemany('INSERT INTO exact_hashes VALUES (?, ?, ?, ?)', exact_rows)
+                database.commit()
 
-    # Limit top duplicates to max 50 groups to prevent browser DOM freezing
-    duplicates_list = duplicates_list[:50]
-    hogs = sorted(hogs, key=lambda x: x['sizeBytes'], reverse=True)[:10]
+            if not cancelled:
+                database.execute('CREATE INDEX exact_hashes_by_sha ON exact_hashes(size, sha)')
+                exact_groups = database.execute(
+                    'SELECT size, sha, COUNT(*) FROM exact_hashes GROUP BY size, sha HAVING COUNT(*) > 1'
+                )
+                for size, sha, file_count in exact_groups:
+                    duplicate_groups_found += 1
+                    if len(duplicates_list) >= 50:
+                        continue
+                    identical_items = list(database.execute(
+                        'SELECT path, mtime FROM exact_hashes WHERE size = ? AND sha = ? LIMIT 100',
+                        (size, sha)
+                    ))
+                    fname = os.path.basename(identical_items[0][0])
+                    duplicates_list.append({
+                        'hash': sha, 'name': fname, 'sizeBytes': size,
+                        'aiCategory': categorize_file_extension(fname),
+                        'confidence': 'Exact content match (SHA-256)',
+                        'fileCount': file_count, 'filesTruncated': file_count > len(identical_items),
+                        'files': [
+                            {'path': path, 'mtime': mtime, 'selected': False, 'action': 'trash'}
+                            for path, mtime in identical_items
+                        ]
+                    })
+        all_scanned_items = [entry[2] for entry in sorted(candidate_heap, reverse=True)]
+        hogs = [entry[2] for entry in sorted(hog_heap, reverse=True)[:10]]
+    finally:
+        database.close()
+        try:
+            os.unlink(database_path)
+        except OSError:
+            pass
+
+    if cancelled:
+        update_scan_progress(scan_id, phase='cancelled', filesScanned=total_files,
+                             directoriesScanned=directories_scanned,
+                             skippedDirectories=skipped_directories)
+        return {
+            'cancelled': True, 'totalFiles': total_files,
+            'coverage': {'complete': False, 'directoriesScanned': directories_scanned,
+                         'skippedDirectories': skipped_directories, 'skippedFiles': skipped_files,
+                         'bytesScanned': total_bytes_scanned}
+        }
+
+    update_scan_progress(scan_id, phase='complete', filesScanned=total_files,
+                         directoriesScanned=directories_scanned,
+                         skippedDirectories=skipped_directories,
+                         skippedFiles=skipped_files, currentPath=audit_root)
 
     real_strategies = []
     if node_modules_bytes > 0:
@@ -1345,7 +1337,17 @@ def run_real_hd_audit(root_dir, max_files=25000):
 
     return {
         "totalFiles": total_files,
-        "scanLimitReached": scan_limit_reached,
+        "scanLimitReached": False,
+        "duplicateGroupsFound": duplicate_groups_found,
+        "coverage": {
+            "complete": True,
+            "directoriesScanned": directories_scanned,
+            "skippedDirectories": skipped_directories,
+            "skippedFiles": skipped_files,
+            "bytesScanned": total_bytes_scanned,
+            "scopeRoot": audit_root,
+            "duplicateMinimumBytes": 20 * 1024
+        },
         "healthScore": None,
         "archaeologistStories": archaeologist_stories,
         "duplicates": duplicates_list,

@@ -15,6 +15,7 @@ let caseData = structuredClone(EMPTY_AUDIT);
 let activeScanId = 0;
 let activeScanController = null;
 let activeScanCancelledByUser = false;
+let activeBackendScanId = null;
 
 // DOM Elements
 const driveSelectPicker = document.getElementById('driveSelectPicker');
@@ -183,16 +184,27 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
   const progressStrip = document.querySelector('.scan-progress-strip');
   const cancelButton = document.getElementById('btnCancelScan');
   const startedAt = Date.now();
+  if (activeBackendScanId) fetch(`/api/scan_cancel?scan_id=${encodeURIComponent(activeBackendScanId)}`).catch(() => {});
   if (activeScanController) activeScanController.abort();
   const controller = new AbortController();
+  const backendScanId = globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   activeScanController = controller;
+  activeBackendScanId = backendScanId;
   activeScanCancelledByUser = false;
-  const timeoutId = setTimeout(() => controller.abort(), 120000);
-  const progressId = setInterval(() => {
+  const progressId = setInterval(async () => {
     if (scanId === activeScanId && snapshotStatus) {
       const seconds = Math.floor((Date.now() - startedAt) / 1000);
-      snapshotStatus.textContent = `Scanning ${path}… ${seconds}s elapsed. You can keep reviewing the previous snapshot.`;
-      if (dialHealthScore) dialHealthScore.textContent = `${seconds}s`;
+      try {
+        const progress = await fetch(`/api/scan_progress?scan_id=${encodeURIComponent(backendScanId)}`).then(res => res.json());
+        if (scanId !== activeScanId) return;
+        const files = Number(progress.filesScanned) || 0;
+        const directories = Number(progress.directoriesScanned) || 0;
+        const phase = progress.phase === 'indexing' ? 'Checking exact duplicates' : 'Enumerating accessible files';
+        snapshotStatus.textContent = `${phase}… ${files.toLocaleString()} files in ${directories.toLocaleString()} folders · ${seconds}s.`;
+        if (dialHealthScore) dialHealthScore.textContent = files ? files.toLocaleString() : `${seconds}s`;
+      } catch (_progressError) {
+        snapshotStatus.textContent = `Scanning ${path}… ${seconds}s elapsed.`;
+      }
     }
   }, 1000);
 
@@ -212,7 +224,7 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
 
   let data = null;
   try {
-    const params = new URLSearchParams({path, max_age: '600'});
+    const params = new URLSearchParams({path, max_age: '600', scan_id: backendScanId});
     if (force) params.set('refresh', '1');
     const res = await fetch(`/api/scan?${params}`, {signal: controller.signal});
     data = await res.json();
@@ -220,7 +232,7 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
     if (scanId !== activeScanId) return;
     if (dialSvg) dialSvg.classList.remove('scanning');
     const message = netErr.name === 'AbortError'
-      ? (activeScanCancelledByUser ? 'Scan cancelled' : 'Scan timed out after 120 seconds')
+      ? (activeScanCancelledByUser ? 'Scan cancelled' : 'Scan interrupted')
       : `Backend connection offline: ${netErr.message}`;
     if (snapshotStatus) snapshotStatus.textContent = activeScanCancelledByUser
       ? 'Scan cancelled. The previous snapshot is still shown.'
@@ -229,10 +241,10 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
     showToast(message, 'warning');
     return;
   } finally {
-    clearTimeout(timeoutId);
     clearInterval(progressId);
     if (scanId === activeScanId) {
       activeScanController = null;
+      activeBackendScanId = null;
       if (progressStrip) progressStrip.classList.remove('is-scanning');
       if (cancelButton) cancelButton.hidden = true;
       btnRealDiskScan.disabled = false;
@@ -251,15 +263,21 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
   }
 
   try {
+    if (data.cancelled) return;
     caseData = data || {};
     renderAll();
     const snapshot = data.snapshot || {};
     const snapshotDate = snapshot.createdAt ? new Date(snapshot.createdAt * 1000) : new Date();
     if (snapshotStatus) {
-      const limitNote = data.scanLimitReached ? ' Scan limit reached; choose a narrower scope for exhaustive results.' : '';
+      const skipped = Number(data.coverage?.skippedDirectories) || 0;
+      const skippedFiles = Number(data.coverage?.skippedFiles) || 0;
+      const skippedTotal = skipped + skippedFiles;
+      const coverageNote = skippedTotal
+        ? ` Coverage complete for accessible data; ${skipped.toLocaleString()} folders and ${skippedFiles.toLocaleString()} files were inaccessible.`
+        : ' All accessible folders and files were enumerated.';
       snapshotStatus.textContent = (snapshot.fromCache
         ? `Showing snapshot from ${snapshotDate.toLocaleTimeString()} (${Math.round(snapshot.ageSeconds || 0)}s old).`
-        : `Snapshot refreshed at ${snapshotDate.toLocaleTimeString()} in ${((Date.now() - startedAt) / 1000).toFixed(1)}s.`) + limitNote;
+        : `Snapshot refreshed at ${snapshotDate.toLocaleTimeString()} in ${((Date.now() - startedAt) / 1000).toFixed(1)}s.`) + coverageNote;
     }
     showToast(`Storage scan complete: ${Array.isArray(data.duplicates) ? data.duplicates.length : 0} exact duplicate groups found.`, 'success');
   } catch (uiErr) {
@@ -335,6 +353,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnCancelScan = document.getElementById('btnCancelScan');
   if (btnCancelScan) btnCancelScan.addEventListener('click', () => {
     activeScanCancelledByUser = true;
+    if (activeBackendScanId) fetch(`/api/scan_cancel?scan_id=${encodeURIComponent(activeBackendScanId)}`).catch(() => {});
     if (activeScanController) activeScanController.abort();
   });
 

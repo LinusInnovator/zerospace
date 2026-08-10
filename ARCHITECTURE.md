@@ -38,7 +38,7 @@
 All HTTP endpoints bind exclusively to `http://127.0.0.1:8080` for local security.
 
 ### 1. `GET /api/scan?path=<DIRECTORY_PATH>`
-Executes a permission-safe scan of the target directory.
+Executes a permission-safe, exhaustive scan of all accessible files in the target directory. Candidate metadata is staged in a temporary disk-backed SQLite index so scan memory does not grow with file count. Files larger than 20 KB participate in exact-duplicate analysis; full-file SHA-256 is only calculated after size and header matches.
 
 - **Query Parameters**:
   - `path` *(string)*: Absolute folder path to audit (e.g. `/Users/username/Downloads`).
@@ -46,6 +46,12 @@ Executes a permission-safe scan of the target directory.
   ```json
   {
     "totalFiles": 45632,
+    "coverage": {
+      "complete": true,
+      "directoriesScanned": 1204,
+      "skippedDirectories": 3,
+      "duplicateMinimumBytes": 20480
+    },
     "healthScore": 88,
     "burnRate": "+3.4 GB / week",
     "daysLeft": "52 Days",

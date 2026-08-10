@@ -28,6 +28,8 @@ It is an experimental, open-source developer tool—not a consumer Mac cleaner. 
 - **Local reports:** export scan results as JSON or CSV.
 - **Protection Shield:** blocks mutations to macOS system and sensitive user paths.
 - **Fast reload snapshots:** page load reuses a server-memory snapshot for up to 10 minutes; **Scan Scope** always forces a fresh scan.
+- **Exhaustive, bounded-memory enumeration:** every accessible file in the selected scope is counted. Duplicate candidates are indexed in a temporary on-disk SQLite database, while RAM retains only bounded UI samples and top files.
+- **Real progress and cancellation:** the UI reports backend file/folder counts, and cancelling signals the scanner itself to stop—not only the browser request.
 
 ZeroSpace does not use a machine-learning model. Its candidate scores are transparent heuristics for ranking review—not probabilities or guarantees that a file is safe to remove.
 
@@ -42,6 +44,8 @@ To ensure complete transparency as an open-source GitHub project, **ZeroSpace v2
 2. **Localhost service:** the backend binds only to `127.0.0.1`, validates browser origins and Host headers, and serves the UI locally. Stop it with `Ctrl-C` when finished.
 
 3. **Permissions:** scan a specific workspace first. Scanning protected locations may require Full Disk Access for Terminal/Python; ZeroSpace does not need it for ordinary project folders.
+
+   A completed report identifies how many directories could not be read. A root-volume scan remains on the startup volume and does not descend into separately mounted volumes under `/Volumes`.
 
 4. **Conservative actions:** permanent deletion and advanced compression, migration, snapshot, and strategy operations are disabled by default. Review-first mode supports moving confirmed items to Trash.
 

@@ -122,6 +122,22 @@ def test_api_scan_and_archaeologist():
         refreshed = json.loads(resp.read().decode('utf-8'))
         assert_true(refreshed.get("snapshot", {}).get("fromCache") is False, "Manual refresh bypasses snapshot cache")
 
+def test_exhaustive_scan_has_no_file_count_cap():
+    log_step("Exhaustive scan beyond the former 25,000-file cap")
+    exhaustive_dir = os.path.join(TEST_DIR, "exhaustive")
+    os.makedirs(exhaustive_dir, exist_ok=True)
+    expected = 25025
+    for index in range(expected):
+        with open(os.path.join(exhaustive_dir, f"f{index}"), "wb"):
+            pass
+    encoded_path = urllib.parse.quote(exhaustive_dir)
+    req = urllib.request.Request(f"{BASE_URL}/api/scan?path={encoded_path}&refresh=1")
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        data = json.loads(resp.read().decode('utf-8'))
+    assert_true(data.get("totalFiles") == expected, "All 25,025 accessible files were enumerated")
+    assert_true(data.get("coverage", {}).get("complete") is True, "Coverage explicitly reports completion")
+    assert_true(data.get("scanLimitReached") is False, "No arbitrary file-count limit remains")
+
 def test_review_first_blocks_advanced_compression():
     log_step("POST /api/execute - Review-First Advanced Action Guard")
     sample_file = os.path.join(TEST_DIR, "compress_me.json")
@@ -193,6 +209,7 @@ def main():
         test_api_system_hud()
         test_api_reveal_in_finder()
         test_api_scan_and_archaeologist()
+        test_exhaustive_scan_has_no_file_count_cap()
         test_review_first_blocks_advanced_compression()
         test_security_hardening()
         print("\n==========================================================")
