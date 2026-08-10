@@ -2,6 +2,7 @@
 """Focused backend contract tests for hostile and boundary inputs."""
 
 import json
+import http.client
 import os
 import tempfile
 import urllib.error
@@ -25,6 +26,20 @@ def assert_status(fn, expected):
         raise AssertionError(f"expected HTTP {expected}")
 
 
+def assert_oversized_request(expected):
+    parsed = urllib.parse.urlsplit(BASE_URL)
+    connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=20)
+    try:
+        connection.request('POST', '/api/execute', body=None, headers={
+            'Content-Type': 'application/json',
+            'Content-Length': str(256 * 1024 + 1),
+        })
+        response = connection.getresponse()
+        assert response.status == expected, response.status
+    finally:
+        connection.close()
+
+
 def main():
     with request("/api/health") as response:
         assert response.status == 200
@@ -39,8 +54,7 @@ def main():
     malformed = b"not-json"
     assert_status(lambda: request("/api/execute", malformed, {"Content-Type": "application/json"}), 400)
     assert_status(lambda: request("/api/execute", b"{}", {"Content-Type": "text/plain"}), 415)
-    oversized = b"{" + b"x" * (256 * 1024) + b"}"
-    assert_status(lambda: request("/api/execute", oversized, {"Content-Type": "application/json"}), 413)
+    assert_oversized_request(413)
 
     with tempfile.TemporaryDirectory(prefix="zerospace-edge-") as root:
         restricted = os.path.join(root, "restricted")
