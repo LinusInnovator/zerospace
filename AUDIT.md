@@ -24,7 +24,7 @@ Audit date: 2026-08-10
 - `node --check app.js`
 - `python3 scanner_backend.py --version`
 - `git diff --check`
-- Live localhost checks: health `200`, invalid content type `415`, hostile Origin `403`, and sensitive descendant blocked.
+- Live localhost checks: health `200`, invalid content type `415`, hostile Origin `403`, and sensitive descendant blocked. The server binds to the selected loopback port; `launch.sh` may choose above `8080` when the default is occupied.
 
 ## Residual risks and release gates
 

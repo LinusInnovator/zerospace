@@ -20,9 +20,17 @@ jobs:
 
       - name: Launch Local Backend Daemon
         run: |
-          python3 scanner_backend.py > /dev/null 2>&1 &
+          ZEROSPACE_NO_BROWSER=1 python3 scanner_backend.py > /dev/null 2>&1 &
           sleep 2
 
+      - name: Static checks
+        run: |
+          python3 -m py_compile scanner_backend.py test_suite.py verify_security_hardening.py
+          node --check app.js
+          git diff --check
+
       - name: Run Automated Test Suite
+        env:
+          ZEROSPACE_BASE_URL: http://127.0.0.1:8080
         run: |
           python3 test_suite.py

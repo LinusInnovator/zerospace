@@ -4,7 +4,8 @@ class HdDetective < Formula
   head "https://github.com/LinusInnovator/zerospace.git", branch: "main"
   license "MIT"
 
-  depends_on "python@3.11"
+  # Uses the current Homebrew Python 3 runtime; the project supports Python 3.9+.
+  depends_on "python"
 
   def install
     pkgshare.install Dir["*"]

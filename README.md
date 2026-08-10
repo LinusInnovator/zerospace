@@ -42,7 +42,7 @@ To ensure complete transparency as an open-source GitHub project, **ZeroSpace v2
 
 1. **Developer distribution:** this repository runs a Python localhost service and browser UI. It is not currently a signed or notarized `.app`.
 
-2. **Localhost service:** the backend binds only to `127.0.0.1`, validates browser origins and Host headers, and serves the UI locally. Stop it with `Ctrl-C` when finished.
+2. **Localhost service:** the backend binds only to `127.0.0.1`, validates browser origins and Host headers for the selected port, and serves the UI locally. Stop it with `Ctrl-C` when finished.
 
 3. **Permissions:** scan a specific workspace first. Scanning protected locations may require Full Disk Access for Terminal/Python; ZeroSpace does not need it for ordinary project folders.
 
@@ -50,7 +50,11 @@ To ensure complete transparency as an open-source GitHub project, **ZeroSpace v2
 
 4. **Conservative actions:** permanent deletion and advanced compression, migration, snapshot, and strategy operations are disabled by default. Review-first mode supports moving confirmed items to Trash.
 
-5. **No safety guarantees:** duplicate content verification does not prove that a particular path is unused. Always inspect location and context before removal.
+5. **No safety guarantees:** duplicate content verification does not prove that a particular path is unused. Always inspect location and context before removal. ZeroSpace is not backup software or a notarized consumer cleaner.
+
+### Distribution status
+
+The repository is the supported distribution today. The included Homebrew formula is a development `--HEAD` formula; stable signed and notarized releases are not currently published.
 
 ---
 
@@ -67,7 +71,7 @@ cd zerospace
 ./launch.sh
 ```
 
-Open **`http://127.0.0.1:8080`**, choose a project/workspace folder, and scan. Use `Ctrl-C` in Terminal to stop the service.
+Open the URL printed by `launch.sh` (normally **`http://127.0.0.1:8080`**; it selects the next free localhost port if needed), choose a project/workspace folder, and scan. Use `Ctrl-C` in Terminal to stop the service.
 
 ---
 

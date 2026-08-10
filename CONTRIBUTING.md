@@ -26,8 +26,8 @@ Thank you for considering contributing to **HD Optimizer Detective**! We welcome
 
 1. **Fork and Clone**:
    ```bash
-   git clone https://github.com/your-username/hd-optimizer-detective.git
-   cd hd-optimizer-detective
+   git clone https://github.com/LinusInnovator/zerospace.git
+   cd zerospace
    ```
 
 2. **Run Local Server**:
@@ -36,7 +36,7 @@ Thank you for considering contributing to **HD Optimizer Detective**! We welcome
    ```
 
 3. **Open Application**:
-   Navigate to `http://127.0.0.1:8080` in Chrome, Safari, or Arc.
+   Open the URL printed by `./launch.sh` in Chrome, Safari, or Arc.
 
 ---
 
@@ -76,7 +76,7 @@ To add a new junk detection rule (e.g. Docker build cache or Yarn cache):
 Before submitting a Pull Request:
 
 - [ ] Run `python3 scanner_backend.py` and ensure zero console/terminal syntax errors.
-- [ ] Test UI rendering in a browser (`http://127.0.0.1:8080`).
+- [ ] Test UI rendering in a browser using the URL printed by `./launch.sh`.
 - [ ] Verify that no new npm or pip packages were added.
 - [ ] Confirm System Protection Shield test passes:
   ```bash

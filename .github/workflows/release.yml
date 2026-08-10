@@ -19,13 +19,13 @@ jobs:
 
       - name: Run Test Suite
         run: |
-          python3 scanner_backend.py > /dev/null 2>&1 &
+          ZEROSPACE_NO_BROWSER=1 python3 scanner_backend.py > /dev/null 2>&1 &
           sleep 2
-          python3 test_suite.py
+          ZEROSPACE_BASE_URL=http://127.0.0.1:8080 python3 test_suite.py
 
       - name: Create Release Archive (.tar.gz)
         run: |
-          tar -czvf hd-optimizer-detective-${{ github.ref_name }}.tar.gz scanner_backend.py index.html app.js styles.css launch.sh LICENSE README.md
+          tar -czvf hd-optimizer-detective-${{ github.ref_name }}.tar.gz scanner_backend.py index.html app.js styles.css launch.sh LICENSE README.md SECURITY.md ARCHITECTURE.md CONTRIBUTING.md CHANGELOG.md pyproject.toml Formula
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1

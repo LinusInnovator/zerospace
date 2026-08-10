@@ -13,7 +13,7 @@ HD Optimizer Detective v2.0 implements multiple defensive layers to ensure zero 
 - Remote computers or devices on the same local Wi-Fi / LAN network CANNOT access or send API commands to the backend.
 
 ### 2. Strict Origin CORS Policy
-- Cross-Origin Resource Sharing (CORS) is restricted to `http://127.0.0.1:8080` and `http://localhost:8080`.
+- Cross-Origin Resource Sharing (CORS) is restricted to the exact localhost port selected by the running server (normally `8080`; `launch.sh` may choose a higher free port).
 - API requests also validate the localhost Host header, Origin when supplied, and Fetch Metadata. Arbitrary third-party websites opened in other browser tabs cannot execute deletion payloads through normal browser requests.
 - Requests are limited to 256 KiB and 500 operations and must use the documented JSON schema.
 
