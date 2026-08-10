@@ -80,6 +80,11 @@ def safe_dir_size(dpath):
 
 class RealHDScannerBackend(SimpleHTTPRequestHandler):
     """Multi-threaded REST API request handler for storage intelligence."""
+    def log_message(self, format, *args):
+        if self.path.startswith('/api/scan_progress'):
+            return
+        super().log_message(format, *args)
+
     def end_headers(self):
         origin = self.headers.get('Origin', '')
         allowed_origins = {
@@ -898,6 +903,7 @@ def run_real_hd_audit(root_dir, scan_id=None):
     directories_scanned = 0
     skipped_directories = 0
     skipped_files = 0
+    duplicate_candidate_files = 0
     candidate_heap = []
     hog_heap = []
     heap_sequence = 0
@@ -1011,6 +1017,7 @@ def run_real_hd_audit(root_dir, scan_id=None):
                 if size > 10 * 1024 * 1024:
                     record_ui_item(item, hog_heap, MAX_TOP_HOGS)
                 if size > 20 * 1024:
+                    duplicate_candidate_files += 1
                     import datetime
                     mtime = datetime.date.fromtimestamp(stat.st_mtime).isoformat()
                     pending_rows.append((size, fpath, mtime))
@@ -1021,7 +1028,9 @@ def run_real_hd_audit(root_dir, scan_id=None):
                     update_scan_progress(scan_id, phase='enumerating', filesScanned=total_files,
                                          directoriesScanned=directories_scanned,
                                          skippedDirectories=skipped_directories,
-                                         skippedFiles=skipped_files, currentPath=dirpath)
+                                         skippedFiles=skipped_files,
+                                         duplicateCandidateFiles=duplicate_candidate_files,
+                                         currentPath=dirpath)
             if cancelled:
                 break
         if pending_rows:
@@ -1036,6 +1045,14 @@ def run_real_hd_audit(root_dir, scan_id=None):
                                  skippedDirectories=skipped_directories, currentPath=audit_root)
             database.execute('CREATE INDEX files_by_size ON files(size)')
             database.execute('CREATE TABLE fingerprints (size INTEGER, header TEXT, path TEXT, mtime TEXT)')
+            same_size_candidates = database.execute(
+                'SELECT COALESCE(SUM(group_count), 0) FROM '
+                '(SELECT COUNT(*) AS group_count FROM files GROUP BY size HAVING COUNT(*) > 1)'
+            ).fetchone()[0]
+            fingerprinted_files = 0
+            update_scan_progress(scan_id, phase='fingerprinting', filesScanned=total_files,
+                                 candidatesTotal=same_size_candidates, candidatesProcessed=0,
+                                 directoriesScanned=directories_scanned)
             duplicate_sizes = database.execute('SELECT size FROM files GROUP BY size HAVING COUNT(*) > 1')
             for (size,) in duplicate_sizes:
                 if scan_is_cancelled(scan_id):
@@ -1044,11 +1061,17 @@ def run_real_hd_audit(root_dir, scan_id=None):
                 fingerprint_rows = []
                 for path, mtime in database.execute('SELECT path, mtime FROM files WHERE size = ?', (size,)):
                     header_hash = get_fast_header_hash(path)
+                    fingerprinted_files += 1
                     if header_hash:
                         fingerprint_rows.append((size, header_hash, path, mtime))
                     if len(fingerprint_rows) >= 1000:
                         database.executemany('INSERT INTO fingerprints VALUES (?, ?, ?, ?)', fingerprint_rows)
                         fingerprint_rows.clear()
+                    if fingerprinted_files % 1000 == 0:
+                        update_scan_progress(scan_id, phase='fingerprinting', filesScanned=total_files,
+                                             candidatesTotal=same_size_candidates,
+                                             candidatesProcessed=fingerprinted_files,
+                                             directoriesScanned=directories_scanned)
                 if fingerprint_rows:
                     database.executemany('INSERT INTO fingerprints VALUES (?, ?, ?, ?)', fingerprint_rows)
             database.commit()
@@ -1056,6 +1079,15 @@ def run_real_hd_audit(root_dir, scan_id=None):
             if not cancelled:
                 database.execute('CREATE INDEX fingerprints_by_header ON fingerprints(size, header)')
                 database.execute('CREATE TABLE exact_hashes (size INTEGER, sha TEXT, path TEXT, mtime TEXT)')
+                exact_candidates = database.execute(
+                    'SELECT COALESCE(SUM(group_count), 0) FROM '
+                    '(SELECT COUNT(*) AS group_count FROM fingerprints '
+                    'GROUP BY size, header HAVING COUNT(*) > 1)'
+                ).fetchone()[0]
+                exact_hashed_files = 0
+                update_scan_progress(scan_id, phase='hashing', filesScanned=total_files,
+                                     candidatesTotal=exact_candidates, candidatesProcessed=0,
+                                     directoriesScanned=directories_scanned)
                 header_groups = database.execute(
                     'SELECT size, header FROM fingerprints GROUP BY size, header HAVING COUNT(*) > 1'
                 )
@@ -1070,19 +1102,32 @@ def run_real_hd_audit(root_dir, scan_id=None):
                     )
                     for path, mtime in rows:
                         sha = get_file_sha256(path)
+                        exact_hashed_files += 1
                         if sha:
                             exact_rows.append((size, sha, path, mtime))
+                        if exact_hashed_files % 100 == 0:
+                            update_scan_progress(scan_id, phase='hashing', filesScanned=total_files,
+                                                 candidatesTotal=exact_candidates,
+                                                 candidatesProcessed=exact_hashed_files,
+                                                 directoriesScanned=directories_scanned)
                     if exact_rows:
                         database.executemany('INSERT INTO exact_hashes VALUES (?, ?, ?, ?)', exact_rows)
                 database.commit()
 
             if not cancelled:
                 database.execute('CREATE INDEX exact_hashes_by_sha ON exact_hashes(size, sha)')
+                update_scan_progress(scan_id, phase='grouping', filesScanned=total_files,
+                                     duplicateGroupsFound=0,
+                                     directoriesScanned=directories_scanned)
                 exact_groups = database.execute(
                     'SELECT size, sha, COUNT(*) FROM exact_hashes GROUP BY size, sha HAVING COUNT(*) > 1'
                 )
                 for size, sha, file_count in exact_groups:
                     duplicate_groups_found += 1
+                    if duplicate_groups_found % 10 == 0:
+                        update_scan_progress(scan_id, phase='grouping', filesScanned=total_files,
+                                             duplicateGroupsFound=duplicate_groups_found,
+                                             directoriesScanned=directories_scanned)
                     if len(duplicates_list) >= 50:
                         continue
                     identical_items = list(database.execute(

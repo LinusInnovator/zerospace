@@ -351,7 +351,12 @@ body {
   font-family: var(--font-display);
   letter-spacing: -0.03em;
   color: #ffffff;
+  line-height: 1;
+  white-space: nowrap;
+  max-width: 150px;
 }
+.dial-score--compact { font-size: 27px; letter-spacing: -0.045em; }
+.dial-score--dense { font-size: 22px; letter-spacing: -0.055em; }
 .dial-label {
   font-size: 10px;
   font-family: var(--font-main);

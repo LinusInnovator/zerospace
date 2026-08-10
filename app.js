@@ -87,6 +87,14 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
+function setDialValue(value) {
+  if (!dialHealthScore) return;
+  const text = String(value);
+  dialHealthScore.textContent = text;
+  dialHealthScore.classList.toggle('dial-score--compact', text.length >= 7);
+  dialHealthScore.classList.toggle('dial-score--dense', text.length >= 10);
+}
+
 function showToast(message, type = 'info') {
   const toast = document.createElement('div');
   toast.className = 'toast';
@@ -199,9 +207,23 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
         if (scanId !== activeScanId) return;
         const files = Number(progress.filesScanned) || 0;
         const directories = Number(progress.directoriesScanned) || 0;
-        const phase = progress.phase === 'indexing' ? 'Checking exact duplicates' : 'Enumerating accessible files';
-        snapshotStatus.textContent = `${phase}… ${files.toLocaleString()} files in ${directories.toLocaleString()} folders · ${seconds}s.`;
-        if (dialHealthScore) dialHealthScore.textContent = files ? files.toLocaleString() : `${seconds}s`;
+        const processed = Number(progress.candidatesProcessed) || 0;
+        const candidateTotal = Number(progress.candidatesTotal) || 0;
+        const groupsFound = Number(progress.duplicateGroupsFound) || 0;
+        let phaseText = `Enumerating accessible files… ${files.toLocaleString()} files in ${directories.toLocaleString()} folders`;
+        if (progress.phase === 'indexing') phaseText = `Preparing the duplicate index for ${files.toLocaleString()} files`;
+        if (progress.phase === 'fingerprinting') phaseText = `Comparing same-size candidates… ${processed.toLocaleString()} of ${candidateTotal.toLocaleString()}`;
+        if (progress.phase === 'hashing') phaseText = `Verifying possible duplicates with SHA-256… ${processed.toLocaleString()} of ${candidateTotal.toLocaleString()}`;
+        if (progress.phase === 'grouping') phaseText = `Building exact duplicate groups… ${groupsFound.toLocaleString()} found`;
+        snapshotStatus.textContent = `${phaseText} · ${seconds}s.`;
+        setDialValue(files ? files.toLocaleString() : `${seconds}s`);
+        if (statTotalFiles) statTotalFiles.textContent = files.toLocaleString();
+        if (statDuplicateCount) {
+          statDuplicateCount.textContent = progress.phase === 'grouping'
+            ? `${groupsFound.toLocaleString()}+ Groups`
+            : (progress.phase === 'enumerating' ? 'Pending' : 'Checking…');
+        }
+        if (statReclaimableSpace) statReclaimableSpace.textContent = 'Pending';
       } catch (_progressError) {
         snapshotStatus.textContent = `Scanning ${path}… ${seconds}s elapsed.`;
       }
@@ -217,7 +239,7 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
 
   if (dialSvg) dialSvg.classList.add('scanning');
   dialMeterCircle.style.strokeDashoffset = "450";
-  dialHealthScore.textContent = "0s";
+  setDialValue("0s");
 
   // Layer 1: Immediately render scanning skeletons so screen is NEVER black/empty!
   renderScanningSkeletons();
@@ -686,7 +708,12 @@ function recalculateStats() {
   const totalReclaimable = dupBytes + stratBytes;
 
   if (statTotalFiles) statTotalFiles.textContent = caseData.totalFiles ? caseData.totalFiles.toLocaleString() : '0';
-  if (statDuplicateCount) statDuplicateCount.textContent = `${caseData.duplicates ? caseData.duplicates.length : 0} Groups`;
+  if (statDuplicateCount) {
+    const duplicateGroupCount = Number.isFinite(Number(caseData.duplicateGroupsFound))
+      ? Number(caseData.duplicateGroupsFound)
+      : (caseData.duplicates ? caseData.duplicates.length : 0);
+    statDuplicateCount.textContent = `${duplicateGroupCount.toLocaleString()} Groups`;
+  }
   if (statReclaimableSpace) statReclaimableSpace.textContent = formatBytes(totalReclaimable);
   if (statHealthScore) statHealthScore.textContent = caseData.healthScore ? `${caseData.healthScore}%` : '—';
 
@@ -696,7 +723,7 @@ function recalculateStats() {
   }
 
   const indexedFiles = Number(caseData.totalFiles) || 0;
-  if (dialHealthScore) dialHealthScore.textContent = indexedFiles ? indexedFiles.toLocaleString() : '—';
+  setDialValue(indexedFiles ? indexedFiles.toLocaleString() : '—');
   if (dialMeterCircle) {
     dialMeterCircle.style.strokeDashoffset = indexedFiles ? '140' : '565';
   }
