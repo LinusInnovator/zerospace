@@ -1,6 +1,8 @@
 name: HD Detective CI Test Runner
 
 on:
+  schedule:
+    - cron: '17 3 * * *'
   push:
     branches: [ main, master ]
   pull_request:
@@ -8,6 +10,7 @@ on:
 
 jobs:
   test:
+    if: github.event_name != 'schedule'
     runs-on: macos-latest
     steps:
       - name: Checkout Code
@@ -18,15 +21,32 @@ jobs:
         with:
           python-version: '3.10'
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install browser test dependencies
+        run: |
+          npm ci
+          npx playwright install chromium
+
       - name: Launch Local Backend Daemon
         run: |
-          ZEROSPACE_NO_BROWSER=1 python3 scanner_backend.py > /dev/null 2>&1 &
-          sleep 2
+          ZEROSPACE_NO_BROWSER=1 ./launch.sh 8080 > "$RUNNER_TEMP/zerospace.log" 2>&1 &
+          for attempt in {1..30}; do
+            BASE_URL=$(sed -nE 's/^URL: (http:\/\/127\.0\.0\.1:[0-9]+)$/\1/p' "$RUNNER_TEMP/zerospace.log" | tail -1)
+            if [ -n "$BASE_URL" ]; then echo "ZEROSPACE_BASE_URL=$BASE_URL" >> "$GITHUB_ENV"; break; fi
+            sleep 1
+          done
+          test -n "${BASE_URL:-}" || { cat "$RUNNER_TEMP/zerospace.log"; exit 1; }
 
       - name: Static checks
         run: |
           python3 -m py_compile scanner_backend.py test_suite.py verify_security_hardening.py
+          python3 -m py_compile test_edge_cases.py
           node --check app.js
+          node --check playwright.config.js
           git diff --check
 
       - name: Run Automated Test Suite
@@ -34,3 +54,59 @@ jobs:
           ZEROSPACE_BASE_URL: http://127.0.0.1:8080
         run: |
           python3 test_suite.py
+          python3 test_edge_cases.py
+
+      - name: Run browser smoke suite
+        run: npm run test:browser
+
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zerospace-browser-diagnostics
+          path: |
+            test-results/browser/
+            playwright-report/
+            ${{ runner.temp }}/zerospace.log
+
+  compatibility:
+    if: github.event_name == 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install browser test dependencies
+        run: |
+          npm ci
+          npx playwright install chromium
+      - name: Launch ZeroSpace
+        run: |
+          ZEROSPACE_NO_BROWSER=1 ./launch.sh 8080 > "$RUNNER_TEMP/zerospace.log" 2>&1 &
+          for attempt in {1..30}; do
+            BASE_URL=$(sed -nE 's/^URL: (http:\/\/127\.0\.0\.1:[0-9]+)$/\1/p' "$RUNNER_TEMP/zerospace.log" | tail -1)
+            if [ -n "$BASE_URL" ]; then echo "ZEROSPACE_BASE_URL=$BASE_URL" >> "$GITHUB_ENV"; break; fi
+            sleep 1
+          done
+          test -n "${BASE_URL:-}" || { cat "$RUNNER_TEMP/zerospace.log"; exit 1; }
+      - name: Run compatibility smoke tests
+        run: |
+          ZEROSPACE_BASE_URL="$ZEROSPACE_BASE_URL" python3 test_edge_cases.py
+          npm run test:browser
+      - name: Upload compatibility diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zerospace-${{ matrix.os }}-diagnostics
+          path: |
+            test-results/browser/
+            playwright-report/
+            ${{ runner.temp }}/zerospace.log

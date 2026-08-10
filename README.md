@@ -104,6 +104,20 @@ hd-optimizer-detective/
 - 🛡️ [Security Policy & Protection Shield](SECURITY.md)
 - 📜 [Changelog](CHANGELOG.md)
 
+### Verification
+
+Pull requests run Python/API/security checks and a CI-only Playwright browser smoke suite on macOS. To run the same browser checks locally, install Node.js and run:
+
+```bash
+npm ci
+npx playwright install chromium
+ZEROSPACE_NO_BROWSER=1 ./launch.sh 8080
+# In another terminal:
+ZEROSPACE_BASE_URL=http://127.0.0.1:8080 npm run test:browser
+```
+
+The browser harness uses temporary fixture workspaces and never scans or modifies a real personal folder.
+
 ---
 
 ## 📄 License
