@@ -8,11 +8,9 @@
 [![Zero Dependencies](https://img.shields.io/badge/Dependencies-Zero%20External-ff007f.svg?style=for-the-badge)](#architecture)
 [![macOS Protected](https://img.shields.io/badge/System%20Shield-Protected-00f2fe.svg?style=for-the-badge&logo=apple&logoColor=white)](https://apple.com)
 
+<img src="zerospace_banner.png" alt="ZeroSpace - Intelligent macOS APFS Engine" width="100%" style="border-radius: 12px; margin: 20px 0;" />
+
 **ZeroSpace** brings APFS transparent compression (`com.apple.decmpfs` zero access loss), Digital Archaeologist 20-signal AI confidence scoring, 2-pass SHA-256 duplicate matching, Big File Radar filters, and real hardware detection (**sysctl** physical RAM & CPU load) to your Mac — with **zero external dependencies**.
-
----
-
-![ZeroSpace SO visual dark mode Bento UI](file:///Users/linus/.gemini/antigravity-ide/brain/848e785c-b444-466b-8542-f928b6b84e23/media_848e785c-b444-466b-8542-f928b6b84e23_1786092249918.png)
 
 </div>
 
@@ -60,19 +58,12 @@ To ensure complete transparency as an open-source GitHub project, **ZeroSpace v2
 
 ## ⚡ Quick Start
 
-### Option 1: One-Line Install via Homebrew
-```bash
-brew tap your-username/hd-detective
-brew install hd-detective
-hd-detective
-```
-
-### Option 2: Run from Terminal (Zero Dependencies)
+### Run from Terminal (Zero External Dependencies)
 Simply clone and run using built-in macOS Python 3:
 
 ```bash
-git clone https://github.com/your-username/hd-optimizer-detective.git
-cd hd-optimizer-detective
+git clone https://github.com/LinusInnovator/zerospace.git
+cd zerospace
 
 # Start backend server (Binds strictly to http://127.0.0.1:8080)
 python3 scanner_backend.py
