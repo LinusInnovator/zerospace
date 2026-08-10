@@ -1459,7 +1459,7 @@ function renderArchaeologistStories() {
   const stories = caseData.archaeologistStories || [];
 
   if (stories.length === 0) {
-    container.innerHTML = '<div style="text-align: center; color: var(--text-muted); padding: 48px; grid-column: span 2;">Choose a folder or whole-Mac scope above and run a scan. Only real files found in that scope will appear here.</div>';
+    container.innerHTML = '<div class="bento-tile" style="text-align: center; color: var(--text-muted); padding: 48px; grid-column: span 2;"><strong style="display:block;color:var(--text-main);font-size:16px;margin-bottom:8px;">No review candidates found in this scope</strong>Everything accessible here is below the current evidence thresholds. Try a broader scope, or inspect Big File Radar and Storage Treemap for the full inventory.</div>';
     return;
   }
 
@@ -1537,7 +1537,7 @@ function renderArchaeologistStories() {
       
       if (idx === stories.length - 1) {
         const radarBannerText = document.getElementById('radarBannerText');
-        if (radarBannerText) radarBannerText.textContent = `Analysis complete: ${stories.length} workspace categories reviewed`;
+        if (radarBannerText) radarBannerText.textContent = `Analysis complete: ${stories.length} populated use-cases found`;
         if (radarCountTag) {
           radarCountTag.textContent = "COMPLETE";
           radarCountTag.style.background = "rgba(16, 185, 129, 0.2)";

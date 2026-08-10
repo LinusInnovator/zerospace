@@ -785,6 +785,8 @@ def build_archaeologist_narrative_stories(scanned_items, hogs, duplicates, root_
     download_items = []
     version_items = []
     forgotten_items = []
+    archive_items = []
+    media_items = []
 
     ai_bytes = 0
     installer_bytes = 0
@@ -792,6 +794,8 @@ def build_archaeologist_narrative_stories(scanned_items, hogs, duplicates, root_
     download_bytes = 0
     version_bytes = 0
     forgotten_bytes = 0
+    archive_bytes = 0
+    media_bytes = 0
 
     # Categorize scanned items into narrative stories
     for item in (scanned_items or []) + (hogs or []):
@@ -824,6 +828,12 @@ def build_archaeologist_narrative_stories(scanned_items, hogs, duplicates, root_
         elif '/downloads/' in lower_path:
             download_bytes += sz
             download_items.append(item_meta)
+        elif lower_name.endswith(('.zip', '.tar.gz', '.tgz', '.sql', '.dump', '.db', '.dmg', '.pkg')):
+            archive_bytes += sz
+            archive_items.append(item_meta)
+        elif lower_name.endswith(('.mp4', '.mov', '.mkv', '.avi', '.webm')):
+            media_bytes += sz
+            media_items.append(item_meta)
         elif any(p in lower_name for p in ['final', 'v2', 'v3', 'copy', 'draft']):
             version_bytes += sz
             version_items.append(item_meta)
@@ -831,22 +841,22 @@ def build_archaeologist_narrative_stories(scanned_items, hogs, duplicates, root_
             forgotten_bytes += sz
             forgotten_items.append(item_meta)
 
-    # Process duplicates into Version Graveyard
+    # Process every exact duplicate copy into the review story. Selection is a
+    # separate user action; waiting for selected=true made this story appear empty.
     for g in (duplicates or []):
         for f in g.get('files', []):
-            if f.get('selected'):
-                sz = g.get('sizeBytes', 0)
-                conf, prob, why = calculate_file_confidence_score(f['path'], os.path.basename(f['path']), sz, is_duplicate=True)
-                version_bytes += sz
-                version_items.append({
-                    "name": os.path.basename(f['path']),
-                    "path": f['path'],
-                    "size": format_bytes_py(sz),
-                    "sizeBytes": sz,
-                    "confidence": conf,
-                    "futureNeedProb": prob,
-                    "why": why
-                })
+            sz = g.get('sizeBytes', 0)
+            conf, prob, why = calculate_file_confidence_score(f['path'], os.path.basename(f['path']), sz, is_duplicate=True)
+            version_bytes += sz
+            version_items.append({
+                "name": os.path.basename(f['path']),
+                "path": f['path'],
+                "size": format_bytes_py(sz),
+                "sizeBytes": sz,
+                "confidence": conf,
+                "futureNeedProb": prob,
+                "why": why
+            })
 
     stories = [
         {
@@ -921,8 +931,8 @@ def build_archaeologist_narrative_stories(scanned_items, hogs, duplicates, root_
         },
         {
             "id": "story-forgotten",
-            "title": "You Probably Forgot These Existed",
-            "subtitle": "Dormant digital assets untouched for 3+ years.",
+            "title": "Large Files & Other Clutter",
+            "subtitle": "General storage-heavy files worth reviewing, regardless of whether they came from agent work.",
             "icon": "ph-clock-counter-clockwise",
             "confidence": 96,
             "futureNeedProb": 4,
@@ -930,12 +940,40 @@ def build_archaeologist_narrative_stories(scanned_items, hogs, duplicates, root_
             "recoverFormatted": format_bytes_py(forgotten_bytes),
             "itemCount": len(forgotten_items),
             "recommendedAction": "archive",
-            "why": ["✔ Last accessed over 3 years ago", "✔ Dormant storage footprint", "✔ Candidate for NAS / Cloud Archive"],
+            "why": ["✔ Storage-heavy candidate", "✔ Review location and context", "✔ Candidate for archive, compression, or Trash"],
             "items": forgotten_items
+        },
+        {
+            "id": "story-archives",
+            "title": "Archives & Installers",
+            "subtitle": "Archives, disk images, database dumps, and installers that may be safe to consolidate.",
+            "icon": "ph-file-zip",
+            "confidence": 88,
+            "futureNeedProb": 12,
+            "recoverBytes": archive_bytes,
+            "recoverFormatted": format_bytes_py(archive_bytes),
+            "itemCount": len(archive_items),
+            "recommendedAction": "archive",
+            "why": ["✔ Often re-downloadable or reproducible", "✔ Review before moving or compressing", "✔ Keep anything needed for recovery"],
+            "items": archive_items
+        },
+        {
+            "id": "story-media",
+            "title": "Media & Render Output",
+            "subtitle": "Video and render files can dominate storage and are often better archived than deleted.",
+            "icon": "ph-film-strip",
+            "confidence": 78,
+            "futureNeedProb": 22,
+            "recoverBytes": media_bytes,
+            "recoverFormatted": format_bytes_py(media_bytes),
+            "itemCount": len(media_items),
+            "recommendedAction": "archive",
+            "why": ["✔ Frequently among the largest files", "✔ Review source/project relationship", "✔ Archive before deleting"],
+            "items": media_items
         }
     ]
 
-    return stories
+    return [story for story in stories if story.get('itemCount', 0) > 0]
 
 
 def query_apfs_spotlight_indexed_files(root_dir):
