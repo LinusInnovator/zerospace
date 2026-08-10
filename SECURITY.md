@@ -14,7 +14,8 @@ HD Optimizer Detective v2.0 implements multiple defensive layers to ensure zero 
 
 ### 2. Strict Origin CORS Policy
 - Cross-Origin Resource Sharing (CORS) is restricted to `http://127.0.0.1:8080` and `http://localhost:8080`.
-- Arbitrary third-party websites opened in other browser tabs CANNOT execute deletion payloads via cross-site requests.
+- API requests also validate the localhost Host header, Origin when supplied, and Fetch Metadata. Arbitrary third-party websites opened in other browser tabs cannot execute deletion payloads through normal browser requests.
+- Requests are limited to 256 KiB and 500 operations and must use the documented JSON schema.
 
 ### 3. System Protection Shield (`is_safe_file_path`)
 All filesystem modification APIs (`delete`, `trash`, `compress`, `migrate`) pass target paths through `is_safe_file_path()` before performing operations:
@@ -41,6 +42,6 @@ Any attempt to delete or move a protected path returns an immediate `BLOCKED: Pr
 
 If you discover a security vulnerability or path traversal edge case in HD Optimizer Detective, please report it responsibly:
 
-1. **Email**: Open a security disclosure issue or email the maintainers directly.
+1. **Private report**: Use GitHub's private vulnerability reporting feature when it is enabled for the repository. Do not disclose exploitable details in a public issue.
 2. **Details**: Include steps to reproduce, target macOS version, and expected vs actual behavior.
 3. **Response**: We will acknowledge receipt within 24 hours and issue a fix patch within 72 hours.

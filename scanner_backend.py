@@ -19,10 +19,14 @@ import hashlib
 import shutil
 import tarfile
 import subprocess
+import argparse
+import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 PORT = 8080
+MAX_REQUEST_BYTES = 256 * 1024
+MAX_EXECUTE_ITEMS = 500
 
 def safe_getsize(fpath):
     try:
@@ -51,19 +55,47 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
     """Multi-threaded REST API request handler for storage intelligence."""
     def end_headers(self):
         origin = self.headers.get('Origin', '')
-        if origin in ['http://localhost:8080', 'http://127.0.0.1:8080']:
+        allowed_origins = {
+            f"http://127.0.0.1:{self.server.server_port}",
+            f"http://localhost:{self.server.server_port}",
+        }
+        if origin in allowed_origins:
             self.send_header('Access-Control-Allow-Origin', origin)
-        else:
-            self.send_header('Access-Control-Allow-Origin', 'http://127.0.0.1:8080')
+            self.send_header('Vary', 'Origin')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        self.send_header('X-Frame-Options', 'DENY')
+        self.send_header('Referrer-Policy', 'no-referrer')
+        self.send_header('Cache-Control', 'no-store' if self.path.startswith('/api/') else 'no-cache')
         super().end_headers()
 
+    def is_trusted_browser_request(self):
+        """Block cross-site browser requests and DNS-rebinding Host headers."""
+        host = self.headers.get('Host', '').split(':', 1)[0].lower().rstrip('.')
+        if host not in {'127.0.0.1', 'localhost'}:
+            return False
+        origin = self.headers.get('Origin')
+        if origin:
+            allowed = {
+                f"http://127.0.0.1:{self.server.server_port}",
+                f"http://localhost:{self.server.server_port}",
+            }
+            if origin not in allowed:
+                return False
+        return self.headers.get('Sec-Fetch-Site', 'same-origin') in {'same-origin', 'none'}
+
     def do_OPTIONS(self):
-        self.send_response(200)
+        if not self.is_trusted_browser_request():
+            self.send_error(403, "Cross-origin request denied")
+            return
+        self.send_response(204)
         self.end_headers()
 
     def do_GET(self):
+        if self.path.startswith('/api/') and not self.is_trusted_browser_request():
+            self.send_json_response({"error": "Untrusted request origin"}, status=403)
+            return
         parsed = urlparse(self.path)
         if parsed.path == '/api/scan':
             self.handle_api_scan(parsed)
@@ -79,6 +111,9 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
             super().do_GET()
 
     def do_POST(self):
+        if not self.is_trusted_browser_request():
+            self.send_json_response({"error": "Untrusted request origin"}, status=403)
+            return
         parsed = urlparse(self.path)
         if parsed.path == '/api/execute':
             self.handle_api_execute()
@@ -224,17 +259,42 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
 
     def handle_api_execute(self):
         try:
-            content_length = int(self.headers.get('Content-Length', 0))
+            content_type = self.headers.get('Content-Type', '').split(';', 1)[0].strip().lower()
+            if content_type != 'application/json':
+                self.send_json_response({"error": "Content-Type must be application/json"}, status=415)
+                return
+            try:
+                content_length = int(self.headers.get('Content-Length', ''))
+            except ValueError:
+                content_length = -1
+            if content_length < 1 or content_length > MAX_REQUEST_BYTES:
+                self.send_json_response({"error": "Invalid or oversized request body"}, status=413)
+                return
             body = self.rfile.read(content_length)
             payload = json.loads(body.decode('utf-8'))
-
+            if not isinstance(payload, dict):
+                self.send_json_response({"error": "Payload must be a JSON object"}, status=400)
+                return
             items = payload.get('items', [])
+            if not isinstance(items, list):
+                self.send_json_response({"error": "Payload must contain an items array"}, status=400)
+                return
+            if len(items) > MAX_EXECUTE_ITEMS:
+                self.send_json_response({"error": f"At most {MAX_EXECUTE_ITEMS} items are allowed"}, status=400)
+                return
             reclaimed_bytes = 0
             executed_log = []
 
             for item in items:
+                if not isinstance(item, dict):
+                    executed_log.append("REJECTED: Invalid item")
+                    continue
                 file_path = item.get('path')
                 action = item.get('action', 'delete')
+
+                if action not in {'delete', 'trash', 'compress', 'transparent_compress', 'migrate', 'apfs_thin_snapshots', 'strategy'}:
+                    executed_log.append(f"REJECTED: Unsupported action '{action}'")
+                    continue
 
                 if file_path and os.path.exists(file_path):
                     safe, msg = is_safe_file_path(file_path)
@@ -260,8 +320,7 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
                         dest_name = os.path.basename(file_path)
                         dest_path = os.path.join(user_trash, dest_name)
                         if os.path.exists(dest_path):
-                            import time
-                            dest_path = os.path.join(user_trash, f"{dest_name}_{int(time.time())}")
+                            dest_path = unique_destination(user_trash, dest_name)
                         shutil.move(file_path, dest_path)
                         reclaimed_bytes += size
                         executed_log.append(f"Moved to Trash: {file_path} -> {dest_path}")
@@ -269,7 +328,7 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
                     elif action in ['compress', 'transparent_compress']:
                         # APFS Native Invisible Transparent Compression (DecmpFS)
                         temp_comp = file_path + ".apfs_comp"
-                        res = subprocess.run(['ditto', '--hfsCompression', file_path, temp_comp], capture_output=True, text=True)
+                        res = subprocess.run(['ditto', '--hfsCompression', file_path, temp_comp], capture_output=True, text=True, timeout=300)
                         if res.returncode == 0 and os.path.exists(temp_comp):
                             try:
                                 du_orig = int(subprocess.check_output(['du', '-k', file_path]).split()[0]) * 1024
@@ -282,18 +341,15 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
                             reclaimed_bytes += saved
                             executed_log.append(f"APFS Transparent Compressed: {file_path} (Saved {format_bytes_py(saved)} physical SSD space, file remains 100% accessible)")
                         else:
-                            archive_path = file_path + ".tar.gz"
+                            archive_path = unique_archive_path(file_path + ".tar.gz")
                             with tarfile.open(archive_path, "w:gz") as tar:
                                 tar.add(file_path, arcname=os.path.basename(file_path))
-                            if os.path.isfile(file_path):
-                                os.remove(file_path)
-                            reclaimed_bytes += int(size * 0.5)
-                            executed_log.append(f"Compressed: {file_path} -> {archive_path}")
+                            executed_log.append(f"Archived safely (original retained): {file_path} -> {archive_path}")
 
                     elif action == 'migrate':
                         nas_dir = os.path.expanduser("~/Volumes/NAS_Storage/Archive")
                         os.makedirs(nas_dir, exist_ok=True)
-                        dest = os.path.join(nas_dir, os.path.basename(file_path))
+                        dest = unique_destination(nas_dir, os.path.basename(file_path))
                         shutil.move(file_path, dest)
                         reclaimed_bytes += size
                         executed_log.append(f"Migrated to NAS: {file_path} -> {dest}")
@@ -301,8 +357,10 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
                 elif action == 'apfs_thin_snapshots':
                     try:
                         res = subprocess.run(['tmutil', 'thinlocalsnapshots', '/', '10000000000', '4'], capture_output=True, text=True, timeout=20)
-                        reclaimed_bytes += 10 * 1024 * 1024 * 1024
-                        executed_log.append("Purged APFS Local Time Machine Snapshots successfully via tmutil")
+                        if res.returncode == 0:
+                            executed_log.append("Requested APFS local snapshot thinning via tmutil (actual savings vary)")
+                        else:
+                            executed_log.append(f"APFS snapshot thinning failed: {res.stderr.strip() or 'tmutil returned an error'}")
                     except Exception as ex:
                         executed_log.append(f"APFS Snapshot Thinning Note: {ex}")
 
@@ -337,8 +395,16 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
                 "executedItemsCount": len(executed_log),
                 "log": executed_log
             })
-        except Exception as e:
-            self.send_json_response({"error": str(e)}, status=500)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            self.send_json_response({"error": "Malformed JSON request"}, status=400)
+        except Exception:
+            self.log_exception("execute request failed")
+            self.send_json_response({"error": "The operation failed; no further items were processed"}, status=500)
+
+    def log_exception(self, message):
+        print(f"{message}:", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
 
     def send_json_response(self, data, status=200):
         body = json.dumps(data).encode('utf-8')
@@ -379,6 +445,11 @@ PROTECTED_SYSTEM_PATHS = {
     os.path.expanduser('~/Library')
 }
 
+PROTECTED_PREFIXES = {
+    os.path.expanduser('~/.ssh'), os.path.expanduser('~/.gnupg'),
+    os.path.expanduser('~/.config'), os.path.expanduser('~/Library'),
+}
+
 def is_safe_file_path(path):
     if not path:
         return False, "Path is empty"
@@ -396,11 +467,32 @@ def is_safe_file_path(path):
         if resolved == prot or resolved.startswith(prot + '/'):
             return False, f"System directory '{resolved}' is locked by System Integrity Protection"
 
+    for protected in PROTECTED_PREFIXES:
+        protected = os.path.realpath(protected)
+        if resolved == protected or resolved.startswith(protected + os.sep):
+            return False, f"Sensitive path '{resolved}' is locked by Protection Shield"
+
     # Protect root user home directory itself
     if resolved == os.path.expanduser('~'):
         return False, "User root home directory '~' cannot be deleted"
         
     return True, "OK"
+
+
+def unique_destination(directory, basename):
+    """Return a non-existing destination without silently overwriting a file."""
+    candidate = os.path.join(directory, basename)
+    stem, suffix = os.path.splitext(basename)
+    counter = 1
+    while os.path.lexists(candidate):
+        candidate = os.path.join(directory, f"{stem}-{int(time.time())}-{counter}{suffix}")
+        counter += 1
+    return candidate
+
+
+def unique_archive_path(candidate):
+    directory, basename = os.path.split(candidate)
+    return unique_destination(directory or '.', basename)
 
 
 def get_fast_header_hash(filepath):
@@ -1246,8 +1338,23 @@ def get_file_type_icon(fname):
     return 'File'
 
 
-if __name__ == '__main__':
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="ZeroSpace local storage audit server")
+    parser.add_argument('--port', type=int, default=int(os.environ.get('ZEROSPACE_PORT', PORT)))
+    parser.add_argument('--version', action='version', version='ZeroSpace 2.0.0')
+    args = parser.parse_args(argv)
+    if not 1024 <= args.port <= 65535:
+        parser.error('port must be between 1024 and 65535')
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
-    print(f"🚀 ZeroSpace Multi-Threaded macOS Engine running on http://127.0.0.1:{PORT}")
-    httpd = ThreadingHTTPServer(('127.0.0.1', PORT), RealHDScannerBackend)
-    httpd.serve_forever()
+    print(f"ZeroSpace local engine running on http://127.0.0.1:{args.port}")
+    httpd = ThreadingHTTPServer(('127.0.0.1', args.port), RealHDScannerBackend)
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        httpd.server_close()
+
+
+if __name__ == '__main__':
+    main()

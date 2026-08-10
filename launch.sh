@@ -22,4 +22,4 @@ cd "$DIR"
 # Open default browser asynchronously after 1s
 (sleep 1 && (open "http://127.0.0.1:${PORT}" || xdg-open "http://127.0.0.1:${PORT}" || true)) &
 
-python3 scanner_backend.py
+python3 scanner_backend.py --port "$PORT"

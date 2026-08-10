@@ -120,8 +120,8 @@ Executes safe file removal or moves flagged items to Trash.
 To avoid indexing bottlenecks on large SSDs, HD Optimizer Detective uses a **2-Pass Hashing Pipeline**:
 
 1. **Size Grouping**: Group files by exact byte size (`os.path.getsize`). Ignore unique file sizes.
-2. **Pass 1 (8KB MD5 Header Hash)**: Read only the first 8,192 bytes of candidate files (`get_fast_header_hash`). Files with distinct headers are instantly eliminated.
-3. **Pass 2 (1MB SHA-256 Hash)**: Compute `hashlib.sha256()` on the first 1MB of remaining candidate files to guarantee zero false positives.
+2. **Pass 1 (8KB MD5 Header Hash)**: Read only the first 8,192 bytes of candidate files (`get_fast_header_hash`). MD5 is used only as a non-security prefilter; it never establishes duplicate identity.
+3. **Pass 2 (Full-file SHA-256 Hash)**: Stream every byte of remaining candidate files through SHA-256 before reporting a duplicate match.
 
 ---
 

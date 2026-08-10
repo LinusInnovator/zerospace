@@ -105,6 +105,16 @@ Enhance HD Optimizer Detective v2 UI and backend drill-down features according t
 - [x] Eliminate the pitch-black empty container state during backend fetch.
 - [x] Execute `test_suite.py` and commit 100% passing codebase to Git.
 
+### Phase 30: AAA Readiness, Safety & Professional Hardening
+- [x] Audit API trust boundaries, destructive operations, validation, documentation, and accessibility.
+- [x] Enforce localhost Host/origin checks, bounded JSON payloads, action allowlisting, and security headers.
+- [x] Extend Protection Shield coverage to descendants of sensitive user directories.
+- [x] Preserve originals during non-APFS archive fallback and stop reporting estimated savings as facts.
+- [x] Prevent destination overwrites and honor configured launch ports.
+- [x] Remove toast HTML injection and add skip navigation, focus visibility, live status, reduced motion, and stronger muted-text contrast.
+- [x] Repair the Homebrew formula so it no longer advertises a placeholder URL/checksum; support `--HEAD` installs.
+- [x] Run syntax, static diff, and live localhost security checks.
+
 ## Key Decisions & Constraints
 - **Zero External Dependencies:** Keep Python backend and JS frontend free of external library bloat.
 - **Backward Compatibility:** Preserve existing API contracts (`/api/scan`, `/api/execute`, `/api/drives`, `/api/system_hud`).

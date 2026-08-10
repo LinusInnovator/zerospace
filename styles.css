@@ -22,7 +22,7 @@
 
   --text-main: #f8fafc;
   --text-muted: #94a3b8;
-  --text-dim: #475569;
+  --text-dim: #8491a3;
 
   /* Apple Native 2026 Typography System */
   --font-display: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", sans-serif;
@@ -40,6 +40,34 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+}
+
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 10000;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--text-main);
+  color: var(--bg-dark);
+  transform: translateY(-150%);
+}
+.skip-link:focus { transform: translateY(0); }
+
+button:focus-visible, a:focus-visible, input:focus-visible,
+select:focus-visible, [role="button"]:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 body {

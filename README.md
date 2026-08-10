@@ -5,7 +5,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-00f2fe.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 [![Python: 3.9+](https://img.shields.io/badge/Python-3.9%2B-38ef7d.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![Zero Dependencies](https://img.shields.io/badge/Dependencies-Zero%20External-ff007f.svg?style=for-the-badge)](#architecture)
+[![Backend Dependencies](https://img.shields.io/badge/Backend-Python%20stdlib-ff007f.svg?style=for-the-badge)](#architecture)
 [![macOS Protected](https://img.shields.io/badge/System%20Shield-Protected-00f2fe.svg?style=for-the-badge&logo=apple&logoColor=white)](https://apple.com)
 
 <img src="zerospace_banner.png" alt="ZeroSpace - Intelligent macOS APFS Engine" width="100%" style="border-radius: 12px; margin: 20px 0;" />
@@ -21,7 +21,7 @@
 - 🍏 **APFS DecmpFS Invisible Compression**: Compress idle developer assets & model checkpoints transparently with 0% access loss — macOS reads compressed files natively without decompression steps.
 - 📜 **Digital Archaeologist Engine**: Story-driven narrative cleanup highlighting forgotten workspace debris, duplicate version graveyards, and stale build artifacts with 20-signal safety confidence scoring.
 - 💎 **Liquid Glass Bento Grid 2.0**: Tactile glassmorphism cards (`backdrop-filter: blur(20px)`), hairline metallic borders (`rgba(255,255,255,0.08)`), electric cyan accents (`#00f2fe`), and Phosphor Duotone vector iconography.
-- ⚡ **360° Smart Care System Diagnostic**: High-speed hard drive health auditor indexing **25,000+ files in under 800ms**.
+- ⚡ **360° Smart Care System Diagnostic**: Bounded hard-drive audit with a Spotlight fast path on supported macOS volumes and a filesystem-walk fallback.
 - 📡 **Big File Radar**: Isolate large files (>100MB, >500MB, >1GB, >5GB) or stale files untouched for >30, >90, or >365 days.
 - 🗺️ **Interactive Treemap Category Inspector**: Click any storage category block to inspect detailed subfile listings and directory paths in real time.
 - 🔒 **Cryptographic SHA-256 Duplicates Locker**: Fast 2-pass duplicate detection (8KB MD5 header hash → full SHA-256 verification) with 1-click smart selection (`⚡ Select All Duplicates`, `Keep Oldest`, `Keep Newest`, `Select Downloads`).
@@ -58,8 +58,8 @@ To ensure complete transparency as an open-source GitHub project, **ZeroSpace v2
 
 ## ⚡ Quick Start
 
-### Run from Terminal (Zero External Dependencies)
-Simply clone and run using built-in macOS Python 3:
+### Run from Terminal
+Clone and run the backend using Python 3. The backend uses only the Python standard library; the UI currently loads fonts and icons from public CDNs.
 
 ```bash
 git clone https://github.com/LinusInnovator/zerospace.git

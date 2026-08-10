@@ -1,8 +1,7 @@
 class HdDetective < Formula
   desc "Next-Gen macOS Storage Intelligence & Real-Time Hard Drive Optimizer"
-  homepage "https://github.com/your-username/hd-optimizer-detective"
-  url "https://github.com/your-username/hd-optimizer-detective/archive/refs/tags/v2.0.0.tar.gz"
-  sha256 "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  homepage "https://github.com/LinusInnovator/zerospace"
+  head "https://github.com/LinusInnovator/zerospace.git", branch: "main"
   license "MIT"
 
   depends_on "python@3.11"
@@ -16,6 +15,6 @@ class HdDetective < Formula
   end
 
   test do
-    system "#{bin}/hd-detective", "--version"
+    assert_match "ZeroSpace 2.0.0", shell_output("#{bin}/hd-detective --version")
   end
 end

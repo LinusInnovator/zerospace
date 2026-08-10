@@ -142,8 +142,15 @@ function formatBytes(bytes) {
 function showToast(message, type = 'info') {
   const toast = document.createElement('div');
   toast.className = 'toast';
+  toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
   const iconClass = type === 'success' ? 'ph-check-circle' : type === 'warning' ? 'ph-warning' : 'ph-info';
-  toast.innerHTML = `<i class="ph-duotone ${iconClass}" style="font-size: 18px; color: var(--primary);"></i> <span>${message}</span>`;
+  const icon = document.createElement('i');
+  icon.className = `ph-duotone ${iconClass}`;
+  icon.style.cssText = 'font-size: 18px; color: var(--primary);';
+  icon.setAttribute('aria-hidden', 'true');
+  const text = document.createElement('span');
+  text.textContent = String(message);
+  toast.append(icon, text);
   toastContainer.appendChild(toast);
 
   setTimeout(() => {
