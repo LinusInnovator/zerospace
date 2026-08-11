@@ -733,7 +733,8 @@ function renderOverviewSummary() {
   const summary = document.getElementById('scanOverviewSummary');
   if (!summary) return;
   const totalFiles = Number(caseData.totalFiles) || 0;
-  const stories = Array.isArray(caseData.archaeologistStories) ? caseData.archaeologistStories.length : 0;
+  const activeStories = getActionableStories();
+  const stories = activeStories.length;
   const duplicates = Number.isFinite(Number(caseData.duplicateGroupsFound))
     ? Number(caseData.duplicateGroupsFound)
     : (Array.isArray(caseData.duplicates) ? caseData.duplicates.length : 0);
@@ -777,16 +778,35 @@ function renderSavingsOverview({ duplicateSavings, strategySavings, reclaimable 
     : 'Potential savings are recommendations. Review each path before moving anything to Trash.';
   actions.innerHTML = '';
 
+  const duplicateGroups = Array.isArray(caseData.duplicates) ? caseData.duplicates.length : 0;
   const topHogs = Array.isArray(caseData.topHogs) ? caseData.topHogs : [];
-  const stories = Array.isArray(caseData.archaeologistStories) ? caseData.archaeologistStories : [];
+  const stories = getActionableStories();
   const rows = [
-    { title: 'Exact duplicates', detail: duplicateSavings ? `${formatBytes(duplicateSavings)} · ${caseData.duplicates.length} groups · highest confidence` : 'Highest-confidence savings', tab: 'tabDuplicates' },
-    { title: 'Regeneratable workspace data', detail: strategySavings ? `${formatBytes(strategySavings)} · caches and build output · review required` : 'Caches and build output · review required', tab: 'tabSmartCare' },
-    { title: 'Large or stale files', detail: topHogs.length ? `${topHogs.length} candidates · inspect before acting` : `${stories.length || 'No'} review stories yet`, tab: 'tabBigFiles' },
-  ];
+    {
+      title: 'Exact duplicates',
+      detail: duplicateSavings ? `${formatBytes(duplicateSavings)} · ${duplicateGroups} groups · highest confidence` : 'No verified duplicate savings yet',
+      tab: 'tabDuplicates',
+      value: duplicateSavings,
+      disabled: duplicateSavings <= 0 && duplicateGroups <= 0,
+    },
+    {
+      title: 'Regeneratable workspace data',
+      detail: strategySavings ? `${formatBytes(strategySavings)} · caches and build output · review required` : 'No cache/build savings identified yet',
+      tab: 'tabSmartCare',
+      value: strategySavings,
+      disabled: strategySavings <= 0,
+    },
+    {
+      title: 'Large or stale files',
+      detail: topHogs.length ? `${topHogs.length} candidates · inspect before acting` : `${stories.length || 'No'} populated review stories yet`,
+      tab: 'tabBigFiles',
+      value: topHogs.length || stories.length,
+      disabled: topHogs.length === 0 && stories.length === 0,
+    },
+  ].sort((a, b) => Number(a.disabled) - Number(b.disabled) || b.value - a.value);
   rows.forEach((row) => {
     const card = document.createElement('div');
-    card.className = 'scan-overview-action';
+    card.className = `scan-overview-action${row.disabled ? ' is-muted' : ''}`;
     const title = document.createElement('strong');
     title.textContent = row.title;
     const detail = document.createElement('span');
@@ -794,15 +814,34 @@ function renderSavingsOverview({ duplicateSavings, strategySavings, reclaimable 
     const button = document.createElement('button');
     button.className = 'btn btn-secondary';
     button.type = 'button';
-    button.textContent = 'Review';
+    button.textContent = row.disabled ? 'Waiting' : 'Review';
+    button.disabled = row.disabled;
     button.addEventListener('click', () => switchTab(row.tab));
     card.append(title, detail, button);
     actions.appendChild(card);
   });
   if (primary && !primary.dataset.bound) {
     primary.dataset.bound = 'true';
-    primary.addEventListener('click', () => switchTab((caseData.duplicates || []).length ? 'tabDuplicates' : 'tabBigFiles'));
+    primary.addEventListener('click', () => {
+      const duplicateGroups = Array.isArray(caseData.duplicates) ? caseData.duplicates.length : 0;
+      if (duplicateGroups > 0) {
+        switchTab('tabDuplicates');
+      } else if (getActionableStories().length > 0) {
+        switchTab('tabDigitalArchaeologist');
+      } else {
+        switchTab('tabBigFiles');
+      }
+    });
   }
+}
+
+function getActionableStories() {
+  const stories = Array.isArray(caseData.archaeologistStories) ? caseData.archaeologistStories : [];
+  return stories.filter((story) => {
+    const itemCount = Number(story.itemCount) || (Array.isArray(story.items) ? story.items.length : 0);
+    const recoverBytes = Number(story.recoverBytes) || Number(story.savingsBytes) || 0;
+    return itemCount > 0 || recoverBytes > 0;
+  });
 }
 
 function renderAppleStorageBar() {
@@ -1672,10 +1711,15 @@ function renderArchaeologistStories() {
   if (!container) return;
 
   container.innerHTML = '';
-  const stories = caseData.archaeologistStories || [];
+  const rawStories = Array.isArray(caseData.archaeologistStories) ? caseData.archaeologistStories : [];
+  const stories = getActionableStories();
 
   if (stories.length === 0) {
-    container.innerHTML = '<div class="bento-tile" style="text-align: center; color: var(--text-muted); padding: 48px; grid-column: span 2;"><strong style="display:block;color:var(--text-main);font-size:16px;margin-bottom:8px;">No review candidates found in this scope</strong>Everything accessible here is below the current evidence thresholds. Try a broader scope, or inspect Big File Radar and Storage Treemap for the full inventory.</div>';
+    const scannedCategories = rawStories.length || 0;
+    const scanHint = scanIsActive
+      ? 'The scan is still building evidence. Populated review cards will appear here as soon as files match the safety thresholds.'
+      : `No populated review cards were found${scannedCategories ? ` across ${scannedCategories} checked categories` : ''}. Inspect Big File Radar and Storage Treemap for the full inventory.`;
+    container.innerHTML = `<div class="bento-tile" style="text-align: center; color: var(--text-muted); padding: 48px; grid-column: span 2;"><strong style="display:block;color:var(--text-main);font-size:16px;margin-bottom:8px;">No actionable review cards yet</strong>${scanHint}</div>`;
     return;
   }
 
