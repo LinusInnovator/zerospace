@@ -67,6 +67,7 @@ const workloadSelect = document.getElementById('workloadSelect');
 const btnScanPreset = document.getElementById('btnScanPreset');
 const scanPathInput = document.getElementById('scanPathInput');
 const btnRealDiskScan = document.getElementById('btnRealDiskScan');
+const btnFullRefresh = document.getElementById('btnFullRefresh');
 const btnSmartCareScan = document.getElementById('btnSmartCareScan');
 const btnToggleHud = document.getElementById('btnToggleHud');
 const hudDrawer = document.getElementById('hudDrawer');
@@ -161,6 +162,33 @@ function showToast(message, type = 'info') {
   }, 3500);
 }
 
+async function refreshInventorySettings() {
+  const status = document.getElementById('inventorySettingsStatus');
+  const path = scanPathInput?.value?.trim();
+  if (!status || !path) return;
+  try {
+    const data = await fetch(`/api/inventory?path=${encodeURIComponent(path)}`).then(res => res.json());
+    if (data.error) throw new Error(data.error);
+    const age = Number.isFinite(Number(data.ageSeconds)) ? `${Math.round(Number(data.ageSeconds) / 60)} min ago` : 'not reconciled yet';
+    status.textContent = `${(Number(data.fileCount) || 0).toLocaleString()} indexed files · full refresh ${age}${data.reconciliationDue ? ' · full refresh recommended' : ''}`;
+  } catch (_error) {
+    status.textContent = 'Local inventory status is unavailable. Scans will safely rebuild it when needed.';
+  }
+}
+
+async function clearCurrentInventory() {
+  const path = scanPathInput?.value?.trim();
+  if (!path) return;
+  try {
+    const data = await fetch(`/api/inventory?path=${encodeURIComponent(path)}&clear=1`).then(res => res.json());
+    if (data.error) throw new Error(data.error);
+    showToast('Local inventory cleared. Your files were not changed.', 'success');
+    refreshInventorySettings();
+  } catch (error) {
+    showToast(`Could not clear local inventory: ${error.message}`, 'warning');
+  }
+}
+
 // Fetch Real Assistant HUD Hardware Metrics
 async function fetchRealSystemHud() {
   try {
@@ -226,7 +254,7 @@ async function fetchSystemDrives() {
 }
 
 // Live Hard Drive Scan
-async function runRealSystemDriveScan(path, { force = false, automatic = false } = {}) {
+async function runRealSystemDriveScan(path, { fullRefresh = false, automatic = false } = {}) {
   path = path || (scanPathInput ? scanPathInput.value.trim() : '');
   if (!path) {
     showToast('Choose or enter a workspace path first.', 'warning');
@@ -293,6 +321,7 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
   if (cancelButton) cancelButton.hidden = false;
   btnRealDiskScan.disabled = true;
   btnSmartCareScan.disabled = true;
+  if (btnFullRefresh) btnFullRefresh.disabled = true;
 
   if (dialSvg) dialSvg.classList.add('scanning');
   if (dialHealthLabel) dialHealthLabel.textContent = 'Files indexed · scanning';
@@ -306,7 +335,9 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
   try {
     const params = new URLSearchParams({path, max_age: '600', scan_id: backendScanId});
     if (appSettings.scanGlobalCaches === true) params.set('global_caches', '1');
-    if (force) params.set('refresh', '1');
+    if (automatic) params.set('incremental', '1');
+    else if (fullRefresh) params.set('full_refresh', '1');
+    else params.set('incremental', '1');
     const res = await fetch(`/api/scan?${params}`, {signal: controller.signal});
     data = await res.json();
   } catch (netErr) {
@@ -331,6 +362,7 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
       if (cancelButton) cancelButton.hidden = true;
       btnRealDiskScan.disabled = false;
       btnSmartCareScan.disabled = false;
+      if (btnFullRefresh) btnFullRefresh.disabled = false;
     }
   }
 
@@ -369,9 +401,12 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
       const coverageNote = skippedTotal
         ? ` Coverage complete for accessible data; ${skipped.toLocaleString()} folders and ${skippedFiles.toLocaleString()} files were inaccessible.`
         : ' All accessible folders and files were enumerated.';
+      const inventoryNote = data.coverage?.mode
+        ? ` ${data.coverage.mode === 'full' ? 'Full refresh' : 'Updates'}: ${(Number(data.coverage.reusedFiles) || 0).toLocaleString()} unchanged · ${(Number(data.coverage.changedFiles) || 0).toLocaleString()} changed · ${(Number(data.coverage.newFiles) || 0).toLocaleString()} new.`
+        : '';
       snapshotStatus.textContent = (snapshot.fromCache
         ? `Showing snapshot from ${snapshotDate.toLocaleTimeString()} (${Math.round(snapshot.ageSeconds || 0)}s old).`
-        : `Snapshot refreshed at ${snapshotDate.toLocaleTimeString()} in ${((Date.now() - startedAt) / 1000).toFixed(1)}s.`) + coverageNote;
+        : `Snapshot refreshed at ${snapshotDate.toLocaleTimeString()} in ${((Date.now() - startedAt) / 1000).toFixed(1)}s.`) + coverageNote + inventoryNote;
     }
     showToast(`Storage scan complete: ${Array.isArray(data.duplicates) ? data.duplicates.length : 0} exact duplicate groups found.`, 'success');
   } catch (uiErr) {
@@ -443,8 +478,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
-  btnRealDiskScan.addEventListener('click', () => runRealSystemDriveScan(scanPathInput.value, {force: true}));
-  btnSmartCareScan.addEventListener('click', () => runRealSystemDriveScan(scanPathInput.value, {force: true}));
+  btnRealDiskScan.addEventListener('click', () => runRealSystemDriveScan(scanPathInput.value));
+  btnSmartCareScan.addEventListener('click', () => runRealSystemDriveScan(scanPathInput.value));
+  if (btnFullRefresh) btnFullRefresh.addEventListener('click', () => runRealSystemDriveScan(scanPathInput.value, {fullRefresh: true}));
   const btnCancelScan = document.getElementById('btnCancelScan');
   if (btnCancelScan) btnCancelScan.addEventListener('click', () => {
     activeScanCancelledByUser = true;
@@ -568,8 +604,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       e.preventDefault();
       e.stopPropagation();
       openModal('modalSettingsManager');
+      refreshInventorySettings();
     });
   }
+  const btnClearInventory = document.getElementById('btnClearInventory');
+  if (btnClearInventory) btnClearInventory.addEventListener('click', clearCurrentInventory);
 
   if (btnExportJson) btnExportJson.addEventListener('click', exportJsonReport);
   if (btnExportCsv) btnExportCsv.addEventListener('click', exportCsvReport);
@@ -650,7 +689,7 @@ window.navigateToPathScope = function(newPath) {
   }
   updateScopeHUDBanner(newPath);
   showToast(`Rescanning audit scope from ${newPath}`, "info");
-  runRealSystemDriveScan(newPath, {force: true});
+  runRealSystemDriveScan(newPath);
 };
 
 window.drillUpPathScope = function() {

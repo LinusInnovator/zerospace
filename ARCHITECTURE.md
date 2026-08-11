@@ -38,7 +38,7 @@
 All HTTP endpoints bind exclusively to `127.0.0.1`; the default URL is `http://127.0.0.1:8080`, with `launch.sh` selecting a higher free port when necessary.
 
 ### 1. `GET /api/scan?path=<DIRECTORY_PATH>`
-Executes a permission-safe, exhaustive scan of all accessible files in the target directory. Candidate metadata is staged in a temporary disk-backed SQLite index so scan memory does not grow with file count. Files larger than 20 KB participate in exact-duplicate analysis; full-file SHA-256 is only calculated after size and header matches.
+Executes a permission-safe scan of all accessible files in the target directory. A per-scope SQLite inventory under `~/Library/Application Support/ZeroSpace` reuses unchanged file metadata and verified hashes; candidate metadata is still staged in a disk-backed SQLite index so scan memory does not grow with file count. Files larger than 20 KB participate in exact-duplicate analysis; full-file SHA-256 is only calculated after size and header matches. Pass `incremental=1` to bypass the short UI snapshot cache, or `full_refresh=1` to recompute every file.
 
 - **Query Parameters**:
   - `path` *(string)*: Absolute folder path to audit (e.g. `/Users/username/Downloads`).

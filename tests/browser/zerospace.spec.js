@@ -77,12 +77,15 @@ test.describe('ZeroSpace browser smoke', () => {
     await expect(page.locator('#btnCancelScan')).toBeVisible();
     await expect(page.locator('.tab-scan-state').first()).toContainText('Updating inventory');
     await page.locator('#btnCancelScan').click();
-    await expect(page.locator('#scanSnapshotStatus')).toContainText('Scan cancelled', { timeout: 10_000 });
+    await expect(page.locator('#scanSnapshotStatus')).toHaveText(/Partial scan saved|Showing snapshot/, { timeout: 10_000 });
     await expect(page.locator('#btnCancelScan')).toBeHidden();
 
     await page.locator('[data-tab="tabSmartCare"]').click();
     await page.locator('#btnSmartCareScan').click();
     await expect(page.locator('#scanSnapshotStatus')).toContainText('Snapshot refreshed', { timeout: 30_000 });
+
+    await page.locator('#btnFullRefresh').click();
+    await expect(page.locator('#scanSnapshotStatus')).toContainText('Full refresh:', { timeout: 30_000 });
   });
 
   test('settings persist and exports are produced', async ({ page }) => {

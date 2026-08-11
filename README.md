@@ -28,7 +28,7 @@ It is an experimental, open-source developer tool—not a consumer Mac cleaner. 
 - **User-controlled policies:** local Settings persist compression mode, confidence/savings/size thresholds, excluded extensions and paths, confirmation requirements, archive destination, and optional global-cache analysis. Settings never bypass backend safety gates.
 - **Local reports:** export scan results as JSON or CSV.
 - **Protection Shield:** blocks mutations to macOS system and sensitive user paths.
-- **Fast reload snapshots:** page load reuses a server-memory snapshot for up to 10 minutes; **Scan Scope** always forces a fresh scan.
+- **Incremental local inventory:** completed scans keep a local SQLite inventory in `~/Library/Application Support/ZeroSpace`. **Scan updates** reuses unchanged metadata and verified hashes; **Full refresh** reconciles every file. The inventory never leaves the Mac and can be cleared per scope in Settings.
 - **Exhaustive, bounded-memory enumeration:** every accessible file in the selected scope is counted. Duplicate candidates are indexed in a temporary on-disk SQLite database, while RAM retains only bounded UI samples and top files.
 - **Real progress and cancellation:** the UI reports backend file/folder counts, and cancelling signals the scanner itself to stop—not only the browser request.
 
@@ -42,6 +42,7 @@ ZeroSpace can run headlessly inside an agent workflow without starting the brows
 hd-detective scan .
 hd-detective scan . --json > zerospace-report.json
 hd-detective scan . --json --fail-on duplicates
+hd-detective scan . --full-refresh
 ```
 
 The CLI is read-only. Human output is the default; `--json` emits a versioned `schemaVersion: 1` report with a deduplicated `findings` array containing paths, sizes, categories, confidence, reasons, evidence sources, duplicate groups, and recommended actions. `--fail-on findings` or `--fail-on duplicates` returns exit code `1` for CI/agent gating; successful scans return `0`, and invalid or failed scans return `2`.

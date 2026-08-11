@@ -25,6 +25,7 @@ import threading
 import heapq
 import sqlite3
 import tempfile
+import uuid
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -39,6 +40,68 @@ ACTIVE_SCANS = {}
 ACTIVE_SCANS_LOCK = threading.Lock()
 MAX_UI_CANDIDATES = 500
 MAX_TOP_HOGS = 100
+INVENTORY_SCHEMA_VERSION = 1
+INVENTORY_RECONCILIATION_SECONDS = 30 * 24 * 60 * 60
+
+
+def inventory_root_dir():
+    """Return a local, user-controlled inventory location (overridable in tests)."""
+    configured = os.environ.get('ZEROSPACE_INVENTORY_DIR')
+    if configured:
+        return os.path.realpath(os.path.abspath(os.path.expanduser(configured)))
+    return os.path.join(os.path.expanduser('~/Library/Application Support'), 'ZeroSpace', 'inventory')
+
+
+def inventory_path_for_scope(scope_root):
+    canonical = os.path.realpath(os.path.abspath(scope_root))
+    digest = hashlib.sha256(canonical.encode('utf-8')).hexdigest()[:24]
+    return os.path.join(inventory_root_dir(), f'{digest}.sqlite3')
+
+
+def open_scope_inventory(scope_root):
+    root = inventory_root_dir()
+    os.makedirs(root, mode=0o700, exist_ok=True)
+    path = inventory_path_for_scope(scope_root)
+    try:
+        db = sqlite3.connect(path)
+        db.execute('PRAGMA journal_mode=WAL')
+        db.execute('PRAGMA synchronous=NORMAL')
+        db.execute('CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
+        version = db.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
+        if version and version[0] != str(INVENTORY_SCHEMA_VERSION):
+            db.close()
+            os.replace(path, f'{path}.incompatible-{int(time.time())}')
+            return open_scope_inventory(scope_root)
+        db.execute('''CREATE TABLE IF NOT EXISTS inventory (
+            path TEXT PRIMARY KEY, device INTEGER, inode INTEGER, size INTEGER,
+            mtime_ns INTEGER, mtime TEXT, category TEXT, item_type TEXT,
+            header_hash TEXT, sha256 TEXT, last_seen TEXT NOT NULL
+        )''')
+        db.execute('CREATE INDEX IF NOT EXISTS inventory_identity ON inventory(device, inode)')
+        db.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)", (str(INVENTORY_SCHEMA_VERSION),))
+        db.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('scope_root', ?)", (os.path.realpath(scope_root),))
+        db.commit()
+        return db, path
+    except (sqlite3.Error, OSError):
+        try:
+            if 'db' in locals():
+                db.close()
+        except Exception:
+            pass
+        return None, None
+
+
+def inventory_metadata(db):
+    if not db:
+        return {'available': False, 'ageSeconds': None, 'reconciliationDue': False}
+    try:
+        row = db.execute("SELECT value FROM meta WHERE key = 'last_full_scan'").fetchone()
+        last_full = float(row[0]) if row else None
+        age = max(0, time.time() - last_full) if last_full else None
+        return {'available': True, 'ageSeconds': round(age, 1) if age is not None else None,
+                'reconciliationDue': age is None or age >= INVENTORY_RECONCILIATION_SECONDS}
+    except (sqlite3.Error, TypeError, ValueError):
+        return {'available': False, 'ageSeconds': None, 'reconciliationDue': False}
 
 def update_scan_progress(scan_id, **updates):
     if not scan_id:
@@ -176,6 +239,8 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
             self.handle_api_scan_progress(parsed)
         elif parsed.path == '/api/scan_cancel':
             self.handle_api_scan_cancel(parsed)
+        elif parsed.path == '/api/inventory':
+            self.handle_api_inventory(parsed)
         elif parsed.path == '/api/drives':
             self.handle_api_drives()
         elif parsed.path == '/api/system_hud':
@@ -184,6 +249,9 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
             self.handle_api_reveal_in_finder(parsed)
         elif parsed.path == '/api/health':
             self.send_json_response({"status": "ok", "mode": "real_system_backend", "hardened": True})
+        elif parsed.path == '/favicon.ico':
+            self.send_response(204)
+            self.end_headers()
         else:
             super().do_GET()
 
@@ -232,7 +300,8 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
             self.send_json_response({"error": f"Path '{target_path}' does not exist"}, status=400)
             return
 
-        force_refresh = params.get('refresh', ['0'])[0] == '1'
+        full_refresh = params.get('full_refresh', params.get('refresh', ['0']))[0] == '1'
+        incremental_request = params.get('incremental', ['0'])[0] == '1'
         scan_id = params.get('scan_id', [''])[0][:80]
         scan_global_caches = params.get('global_caches', ['0'])[0] == '1'
         try:
@@ -243,7 +312,7 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
         now = time.time()
         with SCAN_CACHE_LOCK:
             cached = SCAN_CACHE.get(target_path)
-        if not force_refresh and cached and cached.get('scan_global_caches', False) == scan_global_caches and now - cached['created_at'] <= max_age:
+        if not incremental_request and not full_refresh and cached and cached.get('scan_global_caches', False) == scan_global_caches and now - cached['created_at'] <= max_age:
             scan_results = dict(cached['result'])
             scan_results['snapshot'] = {
                 'createdAt': cached['created_at'],
@@ -262,7 +331,7 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
                     'cancel_event': threading.Event(),
                 }
         try:
-            scan_results = run_real_hd_audit(target_path, scan_id=scan_id, scan_global_caches=scan_global_caches)
+            scan_results = run_real_hd_audit(target_path, scan_id=scan_id, scan_global_caches=scan_global_caches, full_refresh=full_refresh)
         except Exception:
             self.log_error("Scan failed for %s", target_path)
             if scan_id:
@@ -291,6 +360,45 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
         if scan_id:
             with ACTIVE_SCANS_LOCK:
                 ACTIVE_SCANS.pop(scan_id, None)
+
+    def handle_api_inventory(self, parsed):
+        params = parse_qs(parsed.query)
+        target_path = params.get('path', [''])[0]
+        safe, message = is_safe_scan_path(target_path)
+        if not safe:
+            self.send_json_response({'error': f'Inventory access denied: {message}'}, status=403)
+            return
+        scope = os.path.realpath(os.path.abspath(os.path.expanduser(target_path)))
+        index_path = inventory_path_for_scope(scope)
+        if params.get('clear', ['0'])[0] == '1':
+            with ACTIVE_SCANS_LOCK:
+                scan_active = any(state.get('currentPath') == scope for state in ACTIVE_SCANS.values())
+            if scan_active:
+                self.send_json_response({'error': 'Stop the active scan before clearing its local inventory.'}, status=409)
+                return
+            try:
+                if os.path.exists(index_path):
+                    os.remove(index_path)
+                for suffix in ('-wal', '-shm'):
+                    try:
+                        os.remove(index_path + suffix)
+                    except FileNotFoundError:
+                        pass
+                with SCAN_CACHE_LOCK:
+                    SCAN_CACHE.pop(scope, None)
+                self.send_json_response({'status': 'cleared', 'scopeRoot': scope})
+            except OSError:
+                self.send_json_response({'error': 'The local inventory could not be cleared. No user files were changed.'}, status=500)
+            return
+        db, _ = open_scope_inventory(scope)
+        metadata = inventory_metadata(db)
+        if db:
+            try:
+                metadata['fileCount'] = db.execute('SELECT COUNT(*) FROM inventory').fetchone()[0]
+            finally:
+                db.close()
+        metadata['scopeRoot'] = scope
+        self.send_json_response(metadata)
 
     def handle_api_scan_progress(self, parsed):
         scan_id = parse_qs(parsed.query).get('scan_id', [''])[0][:80]
@@ -1018,8 +1126,8 @@ def query_apfs_spotlight_indexed_files(root_dir):
     return None
 
 
-def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
-    """Exhaustively enumerate accessible files with bounded in-memory state."""
+def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False, full_refresh=False):
+    """Exhaustively enumerate accessible files with a durable incremental inventory."""
     total_files = 0
     total_bytes_scanned = 0
     directories_scanned = 0
@@ -1038,6 +1146,8 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
     media_bytes = 0
     vm_bytes = 0
     archive_bytes = 0
+    reused_files = changed_files = new_files = removed_files = 0
+    inventory_session = uuid.uuid4().hex
 
     # Real OS Disk Capacity Metrics
     try:
@@ -1051,15 +1161,19 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
         free_disk_bytes = total_disk_bytes - used_disk_bytes
 
     audit_root = root_dir
-    print(f"🕵️ Exhaustive bounded-memory audit scanning: {audit_root}...", file=sys.stderr)
+    inventory, inventory_path = open_scope_inventory(audit_root)
+    inventory_info = inventory_metadata(inventory)
+    scan_mode = 'full' if full_refresh else 'incremental'
+    print(f"🕵️ {scan_mode.title()} bounded-memory audit scanning: {audit_root}...", file=sys.stderr)
 
     database_fd, database_path = tempfile.mkstemp(prefix='zerospace-scan-', suffix='.sqlite3')
     os.close(database_fd)
     database = sqlite3.connect(database_path)
     database.execute('PRAGMA journal_mode=OFF')
     database.execute('PRAGMA synchronous=OFF')
-    database.execute('CREATE TABLE files (size INTEGER, path TEXT, mtime TEXT)')
+    database.execute('CREATE TABLE files (size INTEGER, path TEXT, mtime TEXT, header TEXT, sha TEXT)')
     pending_rows = []
+    pending_inventory_rows = []
 
     def record_ui_item(item, target_heap, limit):
         nonlocal heap_sequence
@@ -1119,6 +1233,32 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
                     continue
                 total_files += 1
                 total_bytes_scanned += size
+                mtime_ns = int(getattr(stat, 'st_mtime_ns', int(stat.st_mtime * 1_000_000_000)))
+                cached_header = cached_sha = None
+                reused = False
+                if inventory and not full_refresh:
+                    try:
+                        prior = inventory.execute(
+                            'SELECT device, inode, size, mtime_ns, header_hash, sha256 FROM inventory WHERE path = ?',
+                            (fpath,)
+                        ).fetchone()
+                        if prior is None:
+                            prior = inventory.execute(
+                                'SELECT device, inode, size, mtime_ns, header_hash, sha256 FROM inventory WHERE device = ? AND inode = ? LIMIT 1',
+                                (int(stat.st_dev), int(stat.st_ino))
+                            ).fetchone()
+                        if prior and prior[:4] == (int(stat.st_dev), int(stat.st_ino), size, mtime_ns):
+                            cached_header, cached_sha = prior[4], prior[5]
+                            reused = True
+                            reused_files += 1
+                        elif prior:
+                            changed_files += 1
+                        else:
+                            new_files += 1
+                    except sqlite3.Error:
+                        inventory = None
+                elif inventory:
+                    changed_files += 1
                 lower_fname = fname.lower()
                 category = None
                 item_type = get_file_type_icon(fname)
@@ -1157,10 +1297,22 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
                     duplicate_candidate_bytes += size
                     import datetime
                     mtime = datetime.date.fromtimestamp(stat.st_mtime).isoformat()
-                    pending_rows.append((size, fpath, mtime))
+                    pending_rows.append((size, fpath, mtime, cached_header, cached_sha))
                     if len(pending_rows) >= 2000:
-                        database.executemany('INSERT INTO files VALUES (?, ?, ?)', pending_rows)
+                        database.executemany('INSERT INTO files VALUES (?, ?, ?, ?, ?)', pending_rows)
                         pending_rows.clear()
+                if inventory:
+                    import datetime
+                    mtime = datetime.date.fromtimestamp(stat.st_mtime).isoformat()
+                    pending_inventory_rows.append((
+                        fpath, int(stat.st_dev), int(stat.st_ino), size, mtime_ns, mtime,
+                        item['category'], item['type'], cached_header, cached_sha, inventory_session
+                    ))
+                    if len(pending_inventory_rows) >= 2000:
+                        inventory.executemany('''INSERT OR REPLACE INTO inventory
+                            (path, device, inode, size, mtime_ns, mtime, category, item_type, header_hash, sha256, last_seen)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''', pending_inventory_rows)
+                        pending_inventory_rows.clear()
                 if total_files % 500 == 0:
                     update_scan_progress(scan_id, phase='enumerating', filesScanned=total_files,
                                          directoriesScanned=directories_scanned,
@@ -1182,8 +1334,15 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
             if cancelled:
                 break
         if pending_rows:
-            database.executemany('INSERT INTO files VALUES (?, ?, ?)', pending_rows)
+            database.executemany('INSERT INTO files VALUES (?, ?, ?, ?, ?)', pending_rows)
+        if inventory and pending_inventory_rows:
+            inventory.executemany('''INSERT OR REPLACE INTO inventory
+                (path, device, inode, size, mtime_ns, mtime, category, item_type, header_hash, sha256, last_seen)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''', pending_inventory_rows)
+            pending_inventory_rows.clear()
         database.commit()
+        if inventory:
+            inventory.commit()
 
         duplicates_list = []
         duplicate_groups_found = 0
@@ -1192,7 +1351,7 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
                                  directoriesScanned=directories_scanned,
                                  skippedDirectories=skipped_directories, currentPath=audit_root)
             database.execute('CREATE INDEX files_by_size ON files(size)')
-            database.execute('CREATE TABLE fingerprints (size INTEGER, header TEXT, path TEXT, mtime TEXT)')
+            database.execute('CREATE TABLE fingerprints (size INTEGER, header TEXT, path TEXT, mtime TEXT, sha TEXT)')
             same_size_candidates = database.execute(
                 'SELECT COALESCE(SUM(group_count), 0) FROM '
                 '(SELECT COUNT(*) AS group_count FROM files GROUP BY size HAVING COUNT(*) > 1)'
@@ -1207,13 +1366,13 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
                     cancelled = True
                     break
                 fingerprint_rows = []
-                for path, mtime in database.execute('SELECT path, mtime FROM files WHERE size = ?', (size,)):
-                    header_hash = get_fast_header_hash(path)
+                for path, mtime, cached_header, cached_sha in database.execute('SELECT path, mtime, header, sha FROM files WHERE size = ?', (size,)):
+                    header_hash = cached_header or get_fast_header_hash(path)
                     fingerprinted_files += 1
                     if header_hash:
-                        fingerprint_rows.append((size, header_hash, path, mtime))
+                        fingerprint_rows.append((size, header_hash, path, mtime, cached_sha))
                     if len(fingerprint_rows) >= 1000:
-                        database.executemany('INSERT INTO fingerprints VALUES (?, ?, ?, ?)', fingerprint_rows)
+                        database.executemany('INSERT INTO fingerprints VALUES (?, ?, ?, ?, ?)', fingerprint_rows)
                         fingerprint_rows.clear()
                     if fingerprinted_files % 1000 == 0:
                         update_scan_progress(scan_id, phase='fingerprinting', filesScanned=total_files,
@@ -1221,7 +1380,7 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
                                              candidatesProcessed=fingerprinted_files,
                                              directoriesScanned=directories_scanned)
                 if fingerprint_rows:
-                    database.executemany('INSERT INTO fingerprints VALUES (?, ?, ?, ?)', fingerprint_rows)
+                    database.executemany('INSERT INTO fingerprints VALUES (?, ?, ?, ?, ?)', fingerprint_rows)
             database.commit()
 
             if not cancelled:
@@ -1245,11 +1404,11 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
                         break
                     exact_rows = []
                     rows = database.execute(
-                        'SELECT path, mtime FROM fingerprints WHERE size = ? AND header = ?',
+                        'SELECT path, mtime, sha FROM fingerprints WHERE size = ? AND header = ?',
                         (size, header_hash)
                     )
-                    for path, mtime in rows:
-                        sha = get_file_sha256(path)
+                    for path, mtime, cached_sha in rows:
+                        sha = cached_sha or get_file_sha256(path)
                         exact_hashed_files += 1
                         if sha:
                             exact_rows.append((size, sha, path, mtime))
@@ -1304,6 +1463,38 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
                         progressiveReclaimableBytes=progressive_duplicate_reclaimable(duplicates_list),
                         directoriesScanned=directories_scanned,
                     )
+        if inventory and not cancelled:
+            try:
+                # Persist newly computed staged hashes only after the current
+                # filesystem metadata has been recorded for this scan session.
+                header_updates = []
+                for path, header in database.execute('SELECT path, header FROM fingerprints'):
+                    header_updates.append((header, path, inventory_session))
+                    if len(header_updates) == 2000:
+                        inventory.executemany('UPDATE inventory SET header_hash = ? WHERE path = ? AND last_seen = ?', header_updates)
+                        header_updates.clear()
+                if header_updates:
+                    inventory.executemany('UPDATE inventory SET header_hash = ? WHERE path = ? AND last_seen = ?', header_updates)
+                sha_updates = []
+                for path, sha in database.execute('SELECT path, sha FROM exact_hashes'):
+                    sha_updates.append((sha, path, inventory_session))
+                    if len(sha_updates) == 2000:
+                        inventory.executemany('UPDATE inventory SET sha256 = ? WHERE path = ? AND last_seen = ?', sha_updates)
+                        sha_updates.clear()
+                if sha_updates:
+                    inventory.executemany('UPDATE inventory SET sha256 = ? WHERE path = ? AND last_seen = ?', sha_updates)
+                removed_files = inventory.execute('SELECT COUNT(*) FROM inventory WHERE last_seen != ?', (inventory_session,)).fetchone()[0]
+                inventory.execute('DELETE FROM inventory WHERE last_seen != ?', (inventory_session,))
+                inventory.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('last_scan', ?)", (str(time.time()),))
+                if full_refresh or inventory_info.get('ageSeconds') is None:
+                    inventory.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('last_full_scan', ?)", (str(time.time()),))
+                inventory.commit()
+            except sqlite3.Error:
+                # A corrupt or unavailable index must never invalidate a read-only scan.
+                try:
+                    inventory.rollback()
+                except sqlite3.Error:
+                    pass
         all_scanned_items = [entry[2] for entry in sorted(candidate_heap, reverse=True)]
         hogs = [entry[2] for entry in sorted(hog_heap, reverse=True)[:10]]
     finally:
@@ -1312,6 +1503,11 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
             os.unlink(database_path)
         except OSError:
             pass
+        if inventory:
+            try:
+                inventory.close()
+            except sqlite3.Error:
+                pass
 
     if cancelled:
         update_scan_progress(scan_id, phase='cancelled', filesScanned=total_files,
@@ -1321,7 +1517,10 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
             'cancelled': True, 'totalFiles': total_files,
             'coverage': {'complete': False, 'directoriesScanned': directories_scanned,
                          'skippedDirectories': skipped_directories, 'skippedFiles': skipped_files,
-                         'bytesScanned': total_bytes_scanned}
+                         'bytesScanned': total_bytes_scanned, 'mode': scan_mode,
+                         'reusedFiles': reused_files, 'changedFiles': changed_files,
+                         'newFiles': new_files, 'removedFiles': 0,
+                         'inventoryAvailable': bool(inventory_path)}
         }
 
     update_scan_progress(scan_id, phase='complete', filesScanned=total_files,
@@ -1550,7 +1749,15 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False):
             "skippedFiles": skipped_files,
             "bytesScanned": total_bytes_scanned,
             "scopeRoot": audit_root,
-            "duplicateMinimumBytes": 20 * 1024
+            "duplicateMinimumBytes": 20 * 1024,
+            "mode": scan_mode,
+            "reusedFiles": reused_files,
+            "changedFiles": changed_files,
+            "newFiles": new_files,
+            "removedFiles": removed_files,
+            "inventoryAvailable": bool(inventory_path),
+            "inventoryAgeSeconds": inventory_info.get('ageSeconds'),
+            "reconciliationDue": inventory_info.get('reconciliationDue', False)
         },
         "healthScore": None,
         "archaeologistStories": archaeologist_stories,
@@ -1667,7 +1874,7 @@ def run_cli_scan(args):
         print(f"Scan failed: path is not an accessible directory: {resolved_path}", file=sys.stderr)
         return 2
     try:
-        results = run_real_hd_audit(resolved_path, scan_global_caches=args.global_caches)
+        results = run_real_hd_audit(resolved_path, scan_global_caches=args.global_caches, full_refresh=args.full_refresh)
         if results.get('cancelled'):
             print('Scan failed: scan was cancelled before completion', file=sys.stderr)
             return 2
@@ -1687,6 +1894,7 @@ def run_cli_scan(args):
         print(f"Review stories: {summary['reviewStories']:,}")
         print(f"Duplicate groups: {summary['duplicateGroups']:,}")
         print(f"Reclaimable duplicate/cache space: {format_bytes_py(summary['reclaimableBytes'])}")
+        print(f"Inventory: {coverage.get('mode', 'incremental')} · {int(coverage.get('reusedFiles') or 0):,} unchanged · {int(coverage.get('changedFiles') or 0):,} changed · {int(coverage.get('newFiles') or 0):,} new")
         print(f"Skipped: {int(coverage.get('skippedDirectories') or 0):,} folders, {int(coverage.get('skippedFiles') or 0):,} files")
         print(f"Findings: {summary['findingCount']:,}")
 
@@ -1744,6 +1952,7 @@ def main(argv=None):
     scan_parser.add_argument('path', help='Directory to scan')
     scan_parser.add_argument('--json', action='store_true', help='Write the versioned machine-readable report to stdout')
     scan_parser.add_argument('--global-caches', action='store_true', help='Include known global developer caches')
+    scan_parser.add_argument('--full-refresh', action='store_true', help='Reconcile every file and bypass reusable inventory hashes')
     scan_parser.add_argument('--fail-on', choices=('findings', 'duplicates'), help='Exit 1 when the selected finding type exists')
     args = parser.parse_args(argv)
     if args.command == 'scan':
