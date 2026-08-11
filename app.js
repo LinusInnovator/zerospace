@@ -665,11 +665,13 @@ function renderOverviewSummary() {
   const duplicates = Number.isFinite(Number(caseData.duplicateGroupsFound))
     ? Number(caseData.duplicateGroupsFound)
     : (Array.isArray(caseData.duplicates) ? caseData.duplicates.length : 0);
-  let reclaimable = 0;
+  let duplicateSavings = 0;
   (caseData.duplicates || []).forEach(group => {
-    (group.files || []).forEach(file => { if (file.selected) reclaimable += Number(file.size || group.sizeBytes || 0); });
+    const copies = Number(group.fileCount) || (group.files || []).length;
+    duplicateSavings += Math.max(0, copies - 1) * (Number(group.sizeBytes) || 0);
   });
-  (caseData.strategies || []).forEach(strategy => { if (strategy.enabled) reclaimable += Number(strategy.savingsBytes || 0); });
+  const strategySavings = (caseData.strategies || []).reduce((sum, strategy) => sum + (Number(strategy.savingsBytes) || 0), 0);
+  let reclaimable = duplicateSavings + strategySavings;
   if (scanIsActive && Number(caseData.progressiveReclaimableBytes) > reclaimable) {
     reclaimable = Number(caseData.progressiveReclaimableBytes);
   }
@@ -684,6 +686,49 @@ function renderOverviewSummary() {
   if (storyCount) storyCount.textContent = stories.toLocaleString();
   if (duplicateCount) duplicateCount.textContent = duplicates.toLocaleString();
   if (reclaimableValue) reclaimableValue.textContent = formatBytes(reclaimable);
+  renderSavingsOverview({ duplicateSavings, strategySavings, reclaimable });
+}
+
+function renderSavingsOverview({ duplicateSavings, strategySavings, reclaimable }) {
+  const headline = document.getElementById('overviewSavingsHeadline');
+  const note = document.getElementById('overviewSavingsNote');
+  const actions = document.getElementById('overviewActionList');
+  const primary = document.getElementById('overviewPrimaryAction');
+  if (!headline || !note || !actions) return;
+
+  const isUpdating = scanIsActive;
+  headline.textContent = reclaimable ? formatBytes(reclaimable) : (isUpdating ? 'Calculating…' : '0 B');
+  note.textContent = isUpdating
+    ? 'Estimated from verified duplicates so far; more may appear as the scan continues.'
+    : 'Potential savings are recommendations. Review each path before moving anything to Trash.';
+  actions.innerHTML = '';
+
+  const topHogs = Array.isArray(caseData.topHogs) ? caseData.topHogs : [];
+  const stories = Array.isArray(caseData.archaeologistStories) ? caseData.archaeologistStories : [];
+  const rows = [
+    { title: 'Exact duplicates', detail: duplicateSavings ? `${formatBytes(duplicateSavings)} · ${caseData.duplicates.length} groups` : 'Highest-confidence savings', tab: 'tabDuplicates' },
+    { title: 'Regeneratable workspace data', detail: strategySavings ? `${formatBytes(strategySavings)} · caches and build output` : 'Caches and build output', tab: 'tabSmartCare' },
+    { title: 'Large or stale files', detail: topHogs.length ? `${topHogs.length} candidates · review individually` : `${stories.length || 'No'} review stories yet`, tab: 'tabBigFiles' },
+  ];
+  rows.forEach((row) => {
+    const card = document.createElement('div');
+    card.className = 'scan-overview-action';
+    const title = document.createElement('strong');
+    title.textContent = row.title;
+    const detail = document.createElement('span');
+    detail.textContent = row.detail;
+    const button = document.createElement('button');
+    button.className = 'btn btn-secondary';
+    button.type = 'button';
+    button.textContent = 'Review';
+    button.addEventListener('click', () => switchTab(row.tab));
+    card.append(title, detail, button);
+    actions.appendChild(card);
+  });
+  if (primary && !primary.dataset.bound) {
+    primary.dataset.bound = 'true';
+    primary.addEventListener('click', () => switchTab((caseData.duplicates || []).length ? 'tabDuplicates' : 'tabBigFiles'));
+  }
 }
 
 function renderAppleStorageBar() {
