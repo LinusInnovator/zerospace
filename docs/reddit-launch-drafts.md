@@ -4,17 +4,28 @@ These are tailored drafts, not a cross-posting instruction. Post one at a time, 
 
 ## 1. r/MacApps
 
-**Title:** `[OS] ZeroSpace — a free, local-first way to find storage clutter and agent-workspace debris`
+**Title:** `[OS] ZeroSpace - free, local-first storage audit tool for Mac developers and agent workspaces`
 
 **Body:**
 
-I built ZeroSpace because agent-heavy development left my Mac full of checkpoints, model files, build output, installers, archives, caches, and abandoned experiments — and I wanted evidence before deleting anything.
+I built ZeroSpace because agent-heavy development left my Mac full of checkpoints, model files, build output, installers, archives, caches, and abandoned experiments, and I wanted evidence before deleting anything.
 
-It scans a chosen scope locally, groups likely clutter into review stories, verifies duplicates separately, and keeps cleanup review-first. Nothing is uploaded and nothing is deleted automatically. There is also a scriptable `hd-detective scan PATH --json` command for agent/CI workflows.
+It scans a chosen scope locally, shows likely reclaimable space, groups review candidates, verifies exact duplicates separately, and keeps cleanup review-first. Nothing is uploaded and nothing is deleted automatically.
 
-Free and open source: https://github.com/LinusInnovator/zerospace
+Important caveat: this is currently a local developer utility, not a signed/notarized `.app` bundle. You run it from the official GitHub repo/Homebrew formula, it starts a localhost UI, and scans stay on your Mac.
 
-**Pricing:** free. **AI disclosure:** the rules are deterministic; no cloud AI is required. I would especially value feedback on first-run clarity and whether the findings feel trustworthy.
+Official source/download: https://github.com/LinusInnovator/zerospace
+
+Transparency:
+
+- I am the creator, so this is self-promotion.
+- Pricing: free.
+- License: MIT open source.
+- Distribution: official GitHub repository only; no redirects, affiliates, referral links, or third-party download mirrors.
+- AI disclosure: the scanner rules are deterministic and no cloud AI is required. I used AI-assisted coding while building the project.
+- Relationship to other work: I am also building OmniCap, and may later use ideas from this there, but ZeroSpace is intended to stand alone as a free tool.
+
+I would especially value feedback on first-run clarity, safety/trust, and whether the findings feel actionable before I make it more app-like.
 
 ## 2. r/LocalLLaMA
 
@@ -43,6 +54,8 @@ The integration surface is intentionally boring: `hd-detective` still starts the
 Code: https://github.com/LinusInnovator/zerospace
 
 I’m most interested in review of the boundaries: macOS permissions, scan cancellation, path safety, and whether the API/CLI contract is useful for other tools.
+
+Context: I am also building a larger app called OmniCap and may reuse parts of this idea later, but ZeroSpace is intentionally MIT-licensed and useful on its own.
 
 ## 4. r/SideProject
 
@@ -78,7 +91,7 @@ It is read-only by default, keeps results on the Mac, and gives a reasoned revie
 
 Free/open source: https://github.com/LinusInnovator/zerospace
 
-I’m the creator and this is self-promotion. Feedback on safety, speed, and whether the overview helps you decide is very welcome.
+I’m the creator and this is self-promotion. I am also building a larger app called OmniCap and may reuse some of the thinking there later, but ZeroSpace is meant to be useful as a standalone free tool. Feedback on safety, speed, and whether the overview helps you decide is very welcome.
 
 ## Posting checklist
 
