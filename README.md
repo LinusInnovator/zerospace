@@ -16,6 +16,8 @@ It is an experimental, open-source developer tool, not a consumer Mac cleaner. S
 
 ZeroSpace is also meant to be reusable. You can run it as a standalone local app, call the CLI from agent workflows, wire the JSON output into your own scripts, or adapt the MIT-licensed code in your own product.
 
+<img src="docs/assets/zerospace-social-preview.png" alt="ZeroSpace dashboard showing a local scan, duplicate groups, and review-first storage clutter actions">
+
 </div>
 
 ---
