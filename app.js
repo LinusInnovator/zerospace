@@ -294,8 +294,19 @@ async function runRealSystemDriveScan(path, { fullRefresh = false, automatic = f
         if (progress.phase === 'hashing') phaseText = `Verifying possible duplicates with SHA-256… ${processed.toLocaleString()} of ${candidateTotal.toLocaleString()}`;
         if (progress.phase === 'grouping') phaseText = `Building exact duplicate groups… ${groupsFound.toLocaleString()} found`;
         snapshotStatus.textContent = `${phaseText} · ${seconds}s.`;
-        setDialValue(files ? files.toLocaleString() : `${seconds}s`);
-        if (dialHealthLabel) dialHealthLabel.textContent = 'Files indexed · scanning';
+        let dialValue = files ? files.toLocaleString() : `${seconds}s`;
+        let dialLabel = 'Files indexed · scanning';
+        if (progress.phase === 'indexing') dialLabel = 'Files indexed · preparing';
+        if (progress.phase === 'fingerprinting' || progress.phase === 'hashing') {
+          dialValue = processed.toLocaleString();
+          dialLabel = progress.phase === 'hashing' ? 'Files verified · duplicates' : 'Candidates checked';
+        }
+        if (progress.phase === 'grouping') {
+          dialValue = groupsFound.toLocaleString();
+          dialLabel = 'Duplicate groups found';
+        }
+        setDialValue(dialValue);
+        if (dialHealthLabel) dialHealthLabel.textContent = dialLabel;
         if (statTotalFiles) statTotalFiles.textContent = files.toLocaleString();
         if (statDuplicateCount) {
           statDuplicateCount.textContent = groupsFound
@@ -769,9 +780,9 @@ function renderSavingsOverview({ duplicateSavings, strategySavings, reclaimable 
   const topHogs = Array.isArray(caseData.topHogs) ? caseData.topHogs : [];
   const stories = Array.isArray(caseData.archaeologistStories) ? caseData.archaeologistStories : [];
   const rows = [
-    { title: 'Exact duplicates', detail: duplicateSavings ? `${formatBytes(duplicateSavings)} · ${caseData.duplicates.length} groups` : 'Highest-confidence savings', tab: 'tabDuplicates' },
-    { title: 'Regeneratable workspace data', detail: strategySavings ? `${formatBytes(strategySavings)} · caches and build output` : 'Caches and build output', tab: 'tabSmartCare' },
-    { title: 'Large or stale files', detail: topHogs.length ? `${topHogs.length} candidates · review individually` : `${stories.length || 'No'} review stories yet`, tab: 'tabBigFiles' },
+    { title: 'Exact duplicates', detail: duplicateSavings ? `${formatBytes(duplicateSavings)} · ${caseData.duplicates.length} groups · highest confidence` : 'Highest-confidence savings', tab: 'tabDuplicates' },
+    { title: 'Regeneratable workspace data', detail: strategySavings ? `${formatBytes(strategySavings)} · caches and build output · review required` : 'Caches and build output · review required', tab: 'tabSmartCare' },
+    { title: 'Large or stale files', detail: topHogs.length ? `${topHogs.length} candidates · inspect before acting` : `${stories.length || 'No'} review stories yet`, tab: 'tabBigFiles' },
   ];
   rows.forEach((row) => {
     const card = document.createElement('div');
