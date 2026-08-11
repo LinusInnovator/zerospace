@@ -46,17 +46,25 @@ I’m most interested in review of the boundaries: macOS permissions, scan cance
 
 ## 4. r/SideProject
 
-**Title:** I built the free storage tool I wanted after my agent projects filled my Mac with invisible debris
+**Title:** I built the free local storage tool I wanted after agent projects filled my Mac with invisible debris
 
 **Body:**
 
-The problem was not “I need a one-click cleaner.” It was “I need to understand what all these files are before I touch them.”
+I built this because my own Mac kept accumulating files from agent-heavy work: cloned experiments, repeated dependencies, model/checkpoint files, build output, installers, archives, caches, downloads, and abandoned project folders.
 
-That became ZeroSpace: a local-first, review-first storage scanner that finds large/stale files, duplicate groups, downloads, installers, media, caches, model artifacts, build output, and abandoned project folders. It is free, open source, and also usable from scripts/CI with a JSON scan command.
+The problem was not “I need a one-click cleaner.” It was “I need to understand what all this stuff is before I touch it.”
 
-Try it or tell me where the UX is confusing: https://github.com/LinusInnovator/zerospace
+That became ZeroSpace: a free, local-first, review-first storage scanner for macOS. It scans a chosen scope, shows likely reclaimable space, explains why files are being surfaced, verifies exact duplicate groups separately, and does not upload anything or delete automatically.
 
-I’m building a larger app (OmniCap); this is a deliberately useful standalone tool and a way to learn in public. Honest criticism is more useful than compliments.
+It also has a scriptable CLI for people building with agents or automation:
+
+`hd-detective scan PATH --json`
+
+So you can use it in your own stack, CI, pre-PR checks, shell agents, or product experiments. The code is MIT licensed and provided as-is.
+
+Repo: https://github.com/LinusInnovator/zerospace
+
+I originally made it because I wanted the functionality myself, and I may later fold parts of the idea into my main app, OmniCap. But ZeroSpace is intended to stand alone as a useful free tool. I’d especially value feedback on first-run clarity, trust/safety, and whether the output feels actionable.
 
 ## 5. r/macOS Developer Saturday
 

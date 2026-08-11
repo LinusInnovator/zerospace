@@ -12,7 +12,9 @@ Coding agents make experiments cheap: parallel worktrees, cloned projects, repea
 
 Agent-heavy developers are the intended audience, not a restriction on the scan. Every file reached in the selected scope participates in size, age, and exact-duplicate analysis; named categories such as dependencies, models, archives, and caches are highlights rather than an allowlist.
 
-It is an experimental, open-source developer tool—not a consumer Mac cleaner. Scans and paths stay local, nothing is changed automatically, and normal cleanup moves reviewed items to Trash.
+It is an experimental, open-source developer tool, not a consumer Mac cleaner. Scans and paths stay local, nothing is changed automatically, and normal cleanup moves reviewed items to Trash.
+
+ZeroSpace is also meant to be reusable. You can run it as a standalone local app, call the CLI from agent workflows, wire the JSON output into your own scripts, or adapt the MIT-licensed code in your own product.
 
 </div>
 
@@ -52,6 +54,19 @@ This makes ZeroSpace useful as a storage-hygiene layer before an agent opens a p
 Copy-paste recipes are in [`examples/agent-workspace-audit.sh`](examples/agent-workspace-audit.sh) and [`examples/github-actions-zerospace.yml`](examples/github-actions-zerospace.yml).
 
 For Codex, Claude, Cursor, or another shell-capable agent, the reusable instruction is simply: “Run `hd-detective scan . --json > zerospace-report.json`, inspect `.findings`, and do not delete anything without explicit review.”
+
+---
+
+## Reuse in your own tools
+
+ZeroSpace is released under the MIT License so other builders can use it without asking permission. You can:
+
+- embed the scan command in pre-PR, CI, or local agent workflows;
+- consume the JSON report in your own dashboards or product checks;
+- fork the scanner, UI, or safety rules for a different local-first app;
+- redistribute modified versions, provided the MIT license notice is preserved where required.
+
+The project is provided as-is, with no warranty or guarantee that a finding is safe to remove. Treat scan output as review evidence, not an automatic deletion instruction.
 
 ---
 
@@ -141,4 +156,4 @@ The browser harness uses temporary fixture workspaces and never scans or modifie
 
 ## 📄 License
 
-Distributed under the MIT License. See [`LICENSE`](LICENSE) for details.
+Distributed under the MIT License. You may use, modify, redistribute, and adapt the project, including in your own products, subject to the license terms. The software is provided as-is, without warranty. See [`LICENSE`](LICENSE) for details.
