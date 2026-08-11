@@ -27,6 +27,7 @@ import sqlite3
 import tempfile
 import uuid
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 PORT = 8080
@@ -250,10 +251,36 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
         elif parsed.path == '/api/health':
             self.send_json_response({"status": "ok", "mode": "real_system_backend", "hardened": True})
         elif parsed.path == '/favicon.ico':
-            self.send_response(204)
-            self.end_headers()
+            self.send_static_asset('docs/assets/favicon-32.png', 'image/png')
         else:
             super().do_GET()
+
+    def do_HEAD(self):
+        parsed = urlparse(self.path)
+        if parsed.path == '/favicon.ico':
+            self.send_static_asset('docs/assets/favicon-32.png', 'image/png', head_only=True)
+        else:
+            super().do_HEAD()
+
+    def send_static_asset(self, relative_path, content_type, head_only=False):
+        base_dir = Path(__file__).resolve().parent
+        asset_path = (base_dir / relative_path).resolve()
+        try:
+            asset_path.relative_to(base_dir)
+        except ValueError:
+            self.send_error(404)
+            return
+        if not asset_path.is_file():
+            self.send_error(404)
+            return
+        data = asset_path.read_bytes()
+        self.send_response(200)
+        self.send_header('Content-Type', content_type)
+        self.send_header('Content-Length', str(len(data)))
+        self.send_header('Cache-Control', 'public, max-age=86400')
+        self.end_headers()
+        if not head_only:
+            self.wfile.write(data)
 
     def do_POST(self):
         if not self.is_trusted_browser_request():
