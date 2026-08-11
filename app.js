@@ -17,6 +17,7 @@ let activeScanController = null;
 let activeScanCancelledByUser = false;
 let activeBackendScanId = null;
 let scanIsActive = false;
+let latestScanProgress = null;
 
 const scanAwarePanels = ['tabSmartCare', 'tabArchaeologist', 'tabDuplicates', 'tabBigFiles', 'tabTreemap', 'tabVelocity', 'tabScript'];
 
@@ -243,18 +244,22 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
   activeScanController = controller;
   activeBackendScanId = backendScanId;
   activeScanCancelledByUser = false;
+  latestScanProgress = null;
+  caseData.partialScan = false;
   const progressId = setInterval(async () => {
     if (scanId === activeScanId && snapshotStatus) {
       const seconds = Math.floor((Date.now() - startedAt) / 1000);
       try {
         const progress = await fetch(`/api/scan_progress?scan_id=${encodeURIComponent(backendScanId)}`).then(res => res.json());
         if (scanId !== activeScanId) return;
+        latestScanProgress = progress;
         setGlobalScanState(true, progress);
         const files = Number(progress.filesScanned) || 0;
         const directories = Number(progress.directoriesScanned) || 0;
         const processed = Number(progress.candidatesProcessed) || 0;
         const candidateTotal = Number(progress.candidatesTotal) || 0;
         const groupsFound = Number(progress.duplicateGroupsFound) || 0;
+        caseData.totalFiles = files;
         let phaseText = `Enumerating accessible files… ${files.toLocaleString()} files in ${directories.toLocaleString()} folders`;
         if (progress.phase === 'indexing') phaseText = `Preparing the duplicate index for ${files.toLocaleString()} files`;
         if (progress.phase === 'fingerprinting') phaseText = `Comparing same-size candidates… ${processed.toLocaleString()} of ${candidateTotal.toLocaleString()}`;
@@ -341,7 +346,18 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
   }
 
   try {
-    if (data.cancelled) return;
+    if (data.cancelled) {
+      if (activeScanCancelledByUser) {
+        const partial = latestScanProgress || {};
+        caseData.totalFiles = Number(partial.filesScanned) || Number(data.totalFiles) || Number(caseData.totalFiles) || 0;
+        caseData.duplicateGroupsFound = Number(partial.duplicateGroupsFound) || (caseData.duplicates || []).length;
+        caseData.partialScan = true;
+        renderAll();
+        if (snapshotStatus) snapshotStatus.textContent = `Partial scan saved — ${caseData.totalFiles.toLocaleString()} files indexed. Start a new scan to complete the audit.`;
+        showToast('Scan stopped. Partial findings were kept for review.', 'info');
+      }
+      return;
+    }
     caseData = data || {};
     renderAll();
     const snapshot = data.snapshot || {};
@@ -433,7 +449,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (btnCancelScan) btnCancelScan.addEventListener('click', () => {
     activeScanCancelledByUser = true;
     if (activeBackendScanId) fetch(`/api/scan_cancel?scan_id=${encodeURIComponent(activeBackendScanId)}`).catch(() => {});
-    if (activeScanController) activeScanController.abort();
+    if (btnCancelScan) btnCancelScan.disabled = true;
+    const snapshotStatus = document.getElementById('scanSnapshotStatus');
+    if (snapshotStatus) snapshotStatus.textContent = 'Stopping scan and keeping the latest partial findings…';
   });
 
   btnToggleHud.addEventListener('click', () => {
@@ -681,6 +699,8 @@ function renderOverviewSummary() {
   }
   summary.hidden = totalFiles === 0 && stories === 0 && duplicates === 0;
   const scope = document.getElementById('scanOverviewScope');
+  const overviewTitle = document.getElementById('scanOverviewTitle');
+  if (overviewTitle) overviewTitle.textContent = caseData.partialScan ? 'Partial scan decision brief' : 'Storage decision brief';
   if (scope) scope.textContent = scanPathInput?.value ? `Scope: ${scanPathInput.value}` : 'Selected scope';
   const files = document.getElementById('overviewFiles');
   const storyCount = document.getElementById('overviewStories');

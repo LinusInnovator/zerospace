@@ -138,11 +138,11 @@
       <div class="scan-progress-strip" role="status" aria-live="polite">
         <span id="scanProgressDot" aria-hidden="true"></span>
         <span id="scanSnapshotStatus">Preparing the first storage snapshot…</span>
-        <button id="btnCancelScan" class="btn btn-secondary" type="button" hidden>Cancel scan</button>
+        <button id="btnCancelScan" class="btn btn-secondary" type="button" hidden>Stop scan &amp; keep findings</button>
       </div>
       <div id="scanOverviewSummary" class="scan-overview-summary" hidden aria-live="polite">
         <div class="scan-overview-heading">
-          <strong>Storage decision brief</strong>
+          <strong id="scanOverviewTitle">Storage decision brief</strong>
           <span id="scanOverviewScope">Selected scope</span>
         </div>
         <div class="scan-overview-lead">
