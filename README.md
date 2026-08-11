@@ -38,6 +38,18 @@ ZeroSpace is also meant to be reusable. You can run it as a standalone local app
 
 ZeroSpace does not use a machine-learning model. Its candidate scores are transparent heuristics for ranking review—not probabilities or guarantees that a file is safe to remove.
 
+## How it differs
+
+ZeroSpace is not trying to replace polished disk visualizers or one-click cleaner apps. Disk visualizers are excellent for seeing where storage went; dedicated cleaner apps are useful for targeted cache cleanup.
+
+ZeroSpace focuses on a narrower workflow:
+
+- local, review-first evidence before deletion;
+- agent/developer workspace debris alongside ordinary clutter;
+- exact duplicate verification kept separate from recommendations;
+- CLI/JSON output for agents, CI, and product integrations;
+- MIT-licensed code that other builders can adapt.
+
 ## Agent integration
 
 ZeroSpace can run headlessly inside an agent workflow without starting the browser:
