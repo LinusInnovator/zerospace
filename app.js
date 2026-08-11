@@ -77,6 +77,7 @@ const hudCpuBar = document.getElementById('hudCpuBar');
 const hudTrashText = document.getElementById('hudTrashText');
 
 const dialHealthScore = document.getElementById('dialHealthScore');
+const dialHealthLabel = document.getElementById('dialHealthLabel');
 const dialMeterCircle = document.getElementById('dialMeterCircle');
 const dialSvg = document.querySelector('.dial-svg');
 
@@ -261,6 +262,7 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
         if (progress.phase === 'grouping') phaseText = `Building exact duplicate groups… ${groupsFound.toLocaleString()} found`;
         snapshotStatus.textContent = `${phaseText} · ${seconds}s.`;
         setDialValue(files ? files.toLocaleString() : `${seconds}s`);
+        if (dialHealthLabel) dialHealthLabel.textContent = 'Files indexed · scanning';
         if (statTotalFiles) statTotalFiles.textContent = files.toLocaleString();
         if (statDuplicateCount) {
           statDuplicateCount.textContent = groupsFound
@@ -288,6 +290,7 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
   btnSmartCareScan.disabled = true;
 
   if (dialSvg) dialSvg.classList.add('scanning');
+  if (dialHealthLabel) dialHealthLabel.textContent = 'Files indexed · scanning';
   dialMeterCircle.style.strokeDashoffset = "450";
   setDialValue("0s");
 
@@ -328,6 +331,7 @@ async function runRealSystemDriveScan(path, { force = false, automatic = false }
 
   if (scanId !== activeScanId) return;
   if (dialSvg) dialSvg.classList.remove('scanning');
+  if (dialHealthLabel) dialHealthLabel.textContent = data?.cancelled ? 'Scan cancelled' : 'Files indexed';
 
   if (!data || data.error) {
     if (snapshotStatus) snapshotStatus.textContent = `Scan failed: ${data ? data.error : 'empty response'}.`;
@@ -856,7 +860,9 @@ function recalculateStats() {
   const indexedFiles = Number(caseData.totalFiles) || 0;
   setDialValue(indexedFiles ? indexedFiles.toLocaleString() : '—');
   if (dialMeterCircle) {
-    dialMeterCircle.style.strokeDashoffset = indexedFiles ? '140' : '565';
+    // Keep an in-progress scan visibly indeterminate; only a completed scan
+    // earns the full ring, avoiding a false “done” signal during hashing.
+    dialMeterCircle.style.strokeDashoffset = scanIsActive ? '390' : (indexedFiles ? '0' : '565');
   }
 }
 
