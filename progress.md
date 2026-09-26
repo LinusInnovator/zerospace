@@ -89,8 +89,21 @@
 - Instantly hydrates 4 glowing glassmorphic skeleton cards (`.skeleton-tile` with animated `@keyframes skeletonShimmer`) & live Radar Pulse indicator at second 0.0 right when scan starts.
 - Ensures the screen is alive and animated immediately, seamlessly cross-fading into real audited story cards.
 
+### Step 19: Watertight Architecture, Security & Feature Remediation
+- Authored radical candor audit identifying dead code, DOM XSS risks, broken shell script generation, strategy execution blocks, and placebo UI states.
+- Authored comprehensive watertight remediation plan in `docs/plans/2026-09-26-watertight-remediation.md`.
+- Implemented standard `unittest.TestCase` suite in `tests/test_engine_unit.py` with standalone execution.
+- Added interruptible cancellation check in `get_file_sha256(filepath, scan_id=scan_id)` to prevent hanging on massive files.
+- Purged uninvoked dead code `query_apfs_spotlight_indexed_files` from `scanner_backend.py`.
+- Synchronized strategy execution: added `targetDir` and `targetPattern` to strategies, implemented pure Python recursive purging, accurately computed `reclaimedBytes`, and enabled safe strategy execution in review-first mode.
+- Prevented DOM-based Stored XSS by implementing `escapeHtml` across all table and card renderers in `app.js`.
+- Fixed shell injection and philosophy mismatch in `generateScriptContent`: implemented `shellEscape` and moved items to `$HOME/.Trash` instead of permanent `rm -f`.
+- Replaced placebo "Flag" with real state management in `caseData.flaggedItems` and included flagged items in the Deletion Preview and execute payloads.
+- Replaced disconnected Story Inspector reclaim: implemented `executeStoryReclaim` to reclaim items from the inspected story and wired `selectStoryItemAction` to live item state.
+- Enhanced Playwright browser suite in `tests/browser/zerospace.spec.js` to cover category flagging and story inspector interactions.
+
 ## Verification Results
-- `git status` → Clean working tree.
 - `python3 -m py_compile scanner_backend.py` → PASSED (0 errors).
-- `python3 test_suite.py` → PASSED (100% test coverage & spec match).
-- Immediate Skeleton Hydration Verification → PASSED.
+- `node --check app.js` → PASSED (0 errors).
+- `python3 -m unittest discover -s tests -p "test_*.py"` → PASSED (9/9 unit tests).
+- `python3 test_cli.py` → PASSED (CLI contract tests passed).

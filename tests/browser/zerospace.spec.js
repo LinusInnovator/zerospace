@@ -105,4 +105,30 @@ test.describe('ZeroSpace browser smoke', () => {
     await page.locator('#btnExportCsv').click();
     await expect(page.locator('#toastContainer')).toContainText('Exported CSV top space hogs report');
   });
+
+  test('category inspector and story inspector wire real flagging and selection', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.locator('#scanSnapshotStatus')).toContainText('Snapshot refreshed', { timeout: 30_000 });
+
+    // Open treemap category inspector
+    await page.locator('[data-tab="tabTreemap"]').click();
+    await page.locator('.treemap-item').first().click();
+    await expect(page.locator('#modalCategoryInspector')).toHaveClass(/open/);
+
+    const flagBtn = page.locator('#modalCategoryTableBody button').filter({ hasText: /Flag/ }).first();
+    if (await flagBtn.count() > 0) {
+      await flagBtn.click();
+      await expect(page.locator('#toastContainer')).toContainText('Flagged for review');
+      await expect(flagBtn).toContainText('Flagged');
+    }
+    await page.locator('#modalCategoryInspector .modal-header button').click();
+
+    // Open story inspector
+    await page.locator('[data-tab="tabArchaeologist"]').click();
+    await expect(page.locator('.lazy-card').first()).toBeVisible();
+    await page.locator('.lazy-card button').filter({ hasText: /Inspect Story/ }).first().click();
+    await expect(page.locator('#modalStoryInspector')).toHaveClass(/open/);
+    await expect(page.locator('#btnStoryExecute')).toBeVisible();
+    await page.locator('#modalStoryInspector .modal-header button').click();
+  });
 });

@@ -133,6 +133,20 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function shellEscape(str) {
+  return "'" + String(str).replace(/'/g, "'\\''") + "'";
+}
+
 function setDialValue(value) {
   if (!dialHealthScore) return;
   const text = String(value);
@@ -437,9 +451,19 @@ async function executeRealCleanup() {
     });
   });
 
+  if (caseData.flaggedItems && caseData.flaggedItems.size > 0) {
+    caseData.flaggedItems.forEach(p => {
+      items.push({ path: p, action: 'trash' });
+    });
+  }
+
   (caseData.strategies || []).forEach(s => {
-    if (s.enabled && s.command) {
-      items.push({ command: s.command, action: 'strategy', name: s.name });
+    if (s.enabled) {
+      if (s.targetDir) {
+        items.push({ targetDir: s.targetDir, targetPattern: s.targetPattern, action: 'strategy', name: s.name });
+      } else if (s.command) {
+        items.push({ command: s.command, action: 'strategy', name: s.name });
+      }
     }
   });
 
@@ -454,12 +478,88 @@ async function executeRealCleanup() {
     const res = await fetch('/api/execute', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ items, settings: getCompressionSettings() })
+      body: JSON.stringify({ items, settings: getCompressionSettings() })
     });
     const result = await res.json();
 
     if (result.status === 'success') {
-      showToast(`Review complete. Moved selected items representing ${formatBytes(result.reclaimedBytes)} to Trash.`, 'success');
+      const rejections = (result.log || []).filter(l => l.startsWith('BLOCKED:') || l.startsWith('REJECTED:'));
+      if (rejections.length > 0) {
+        console.warn('Cleanup blocked items:', rejections);
+        showToast(`${rejections.length} items blocked by safety policy. Reclaimed ${formatBytes(result.reclaimedBytes)}.`, 'warning');
+      } else {
+        showToast(`Review complete. Reclaimed ${formatBytes(result.reclaimedBytes)} (moved to Trash).`, 'success');
+      }
+      if (caseData.flaggedItems) caseData.flaggedItems.clear();
+      closeModal('modalDeletionAudit');
+      runRealSystemDriveScan(scanPathInput.value);
+      fetchRealSystemHud();
+    } else {
+      showToast(`Execution Error: ${result.error}`, 'warning');
+    }
+  } catch (err) {
+    showToast(`Execution Error: ${err.message}`, 'warning');
+  }
+}
+
+let currentInspectedStoryId = null;
+
+async function executeStoryReclaim() {
+  const stories = caseData.archaeologistStories || [];
+  const story = stories.find(s => s.id === currentInspectedStoryId);
+  if (!story) {
+    showToast("No active story selected.", "warning");
+    return;
+  }
+
+  const items = [];
+  (story.items || []).forEach(item => {
+    if (item.selected) {
+      items.push({
+        path: item.path,
+        action: item.action || story.recommendedAction || 'trash',
+        confidence: item.confidence,
+        confirmed: true
+      });
+    }
+  });
+
+  if (items.length === 0) {
+    // If none individually flagged, take all items in this story
+    (story.items || []).forEach(item => {
+      items.push({
+        path: item.path,
+        action: item.action || story.recommendedAction || 'trash',
+        confidence: item.confidence,
+        confirmed: true
+      });
+    });
+  }
+
+  if (items.length === 0) {
+    showToast("No items available to reclaim in this story.", "warning");
+    return;
+  }
+
+  showToast(`Reclaiming ${items.length} items from '${story.title}'...`, 'info');
+
+  try {
+    const res = await fetch('/api/execute', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items, settings: getCompressionSettings() })
+    });
+    const result = await res.json();
+
+    if (result.status === 'success') {
+      const rejections = (result.log || []).filter(l => l.startsWith('BLOCKED:') || l.startsWith('REJECTED:'));
+      if (rejections.length > 0) {
+        console.warn('Story reclaim blocked items:', rejections);
+        showToast(`${rejections.length} items blocked by safety policy. Reclaimed ${formatBytes(result.reclaimedBytes)}.`, 'warning');
+      } else {
+        showToast(`Story cleanup complete. Reclaimed ${formatBytes(result.reclaimedBytes)}.`, 'success');
+      }
+      closeModal('modalStoryInspector');
       runRealSystemDriveScan(scanPathInput.value);
       fetchRealSystemHud();
     } else {
@@ -1006,7 +1106,7 @@ function renderDuplicatesLocker() {
     groupEl.innerHTML = `
       <div class="duplicate-group-header">
         <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-          <span style="font-weight: 700; font-size: 14px;">${group.name}</span>
+          <span style="font-weight: 700; font-size: 14px;">${escapeHtml(group.name)}</span>
           <span style="font-size: 12px; color: var(--accent-amber); font-family: var(--font-code);">(${formatBytes(group.sizeBytes)} per copy)</span>
         </div>
         <div style="display: flex; gap: 6px;">
@@ -1018,8 +1118,8 @@ function renderDuplicatesLocker() {
           <div class="duplicate-file-item ${file.selected ? 'selected-for-deletion' : ''}">
             <div class="file-info">
               <div class="file-details">
-                <div class="file-path" title="${file.path}">${file.path}</div>
-                <div class="file-meta"><span>Modified: ${file.mtime}</span></div>
+                <div class="file-path" title="${escapeHtml(file.path)}">${escapeHtml(file.path)}</div>
+                <div class="file-meta"><span>Modified: ${escapeHtml(file.mtime)}</span></div>
               </div>
             </div>
             <div style="display: flex; align-items: center; gap: 10px;">
@@ -1260,10 +1360,10 @@ function renderTopHogs() {
     const tr = document.createElement('tr');
     tr.style.borderBottom = '1px solid rgba(255, 255, 255, 0.05)';
     tr.innerHTML = `
-      <td style="padding: 10px;">${hog.type}</td>
-      <td style="padding: 10px; color: var(--cyan);">${hog.path}</td>
-      <td style="padding: 10px; font-weight: 700; color: var(--accent-amber);">${hog.size}</td>
-      <td style="padding: 10px; color: #c084fc;">${hog.category}</td>
+      <td style="padding: 10px;">${escapeHtml(hog.type)}</td>
+      <td style="padding: 10px; color: var(--cyan);">${escapeHtml(hog.path)}</td>
+      <td style="padding: 10px; font-weight: 700; color: var(--accent-amber);">${escapeHtml(hog.size)}</td>
+      <td style="padding: 10px; color: #c084fc;">${escapeHtml(hog.category)}</td>
     `;
     topHogsTableBody.appendChild(tr);
   });
@@ -1276,15 +1376,50 @@ function renderVelocityAndInsights() {
 }
 
 function generateScriptContent() {
-  let lines = ["#!/usr/bin/env bash\n# HD Optimizer Detective v2 - Multi-Action Script\nset -e\n"];
+  let lines = [
+    "#!/usr/bin/env bash",
+    "# ZeroSpace v2.0 - Verified Clutter Cleanup Script",
+    "# Moves reviewed clutter to ~/.Trash (retaining recovery safety)",
+    "set -e",
+    "TRASH_DIR=\"$HOME/.Trash\"",
+    "mkdir -p \"$TRASH_DIR\"",
+    ""
+  ];
+
   (caseData.duplicates || []).forEach(g => {
     (g.files || []).forEach(f => {
-      if (f.selected) lines.push(`rm -f "${f.path}"`);
+      if (f.selected) {
+        lines.push(`mv -n ${shellEscape(f.path)} "$TRASH_DIR/"`);
+      }
     });
   });
+
+  if (caseData.flaggedItems && caseData.flaggedItems.size > 0) {
+    caseData.flaggedItems.forEach(p => {
+      lines.push(`mv -n ${shellEscape(p)} "$TRASH_DIR/"`);
+    });
+  }
+
   (caseData.strategies || []).forEach(s => {
-    if (s.enabled) lines.push(s.command);
+    if (s.enabled) {
+      if (s.targetDir) {
+        lines.push(`# Strategy: ${s.name}`);
+        if (s.targetPattern == 'node_modules') {
+          lines.push(`find ${shellEscape(s.targetDir)} -name 'node_modules' -type d -prune -exec rm -rf {} +`);
+        } else if (s.targetPattern == '__pycache__') {
+          lines.push(`find ${shellEscape(s.targetDir)} -type d -name '__pycache__' -exec rm -r {} +`);
+        } else if (s.targetPattern == '.DS_Store') {
+          lines.push(`find ${shellEscape(s.targetDir)} -name '.DS_Store' -type f -delete`);
+        } else {
+          lines.push(`find ${shellEscape(s.targetDir)} -mindepth 1 -delete`);
+        }
+      } else if (s.command) {
+        lines.push(`# Strategy: ${s.name}`);
+        lines.push(s.command);
+      }
+    }
   });
+
   return lines.join("\n");
 }
 
@@ -1316,13 +1451,12 @@ function renderDeletionPreview() {
         deleteCnt++;
         const tr = document.createElement('tr');
         tr.style.borderBottom = '1px solid rgba(255, 255, 255, 0.06)';
-        const pathEscaped = f.path.replace(/'/g, "\\'");
         tr.innerHTML = `
           <td style="padding: 10px;"><span class="action-chip active delete"><i class="ph-duotone ph-trash"></i> MOVE TO TRASH</span></td>
-          <td title="${f.path}" style="padding: 10px; font-family: var(--font-code); font-size: 12px; color: var(--text-main);">
+          <td title="${escapeHtml(f.path)}" style="padding: 10px; font-family: var(--font-code); font-size: 12px; color: var(--text-main);">
             <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-              <span>${f.path}</span>
-              <button class="btn btn-secondary" style="padding: 2px 6px; font-size: 10px;" onclick="revealInFinder('${pathEscaped}')">
+              <span>${escapeHtml(f.path)}</span>
+              <button class="btn btn-secondary" style="padding: 2px 6px; font-size: 10px;" data-path="${escapeHtml(f.path)}" onclick="revealInFinder(this.dataset.path)">
                 <i class="ph-duotone ph-magnifying-glass"></i> Finder
               </button>
             </div>
@@ -1335,6 +1469,34 @@ function renderDeletionPreview() {
     });
   });
 
+  // 1.5 Render flagged review items
+  if (caseData.flaggedItems && caseData.flaggedItems.size > 0) {
+    caseData.flaggedItems.forEach((flaggedPath) => {
+      const found = (caseData.scannedItems || []).find(i => i.path === flaggedPath)
+        || (caseData.topHogs || []).find(i => i.path === flaggedPath)
+        || { path: flaggedPath, sizeBytes: 0 };
+      const sz = found.sizeBytes || 0;
+      totalBytes += sz;
+      deleteCnt++;
+      const tr = document.createElement('tr');
+      tr.style.borderBottom = '1px solid rgba(255, 255, 255, 0.06)';
+      tr.innerHTML = `
+        <td style="padding: 10px;"><span class="action-chip active delete"><i class="ph-duotone ph-flag"></i> FLAGGED ITEM</span></td>
+        <td title="${escapeHtml(flaggedPath)}" style="padding: 10px; font-family: var(--font-code); font-size: 12px; color: var(--text-main);">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+            <span>${escapeHtml(flaggedPath)}</span>
+            <button class="btn btn-secondary" style="padding: 2px 6px; font-size: 10px;" data-path="${escapeHtml(flaggedPath)}" onclick="revealInFinder(this.dataset.path)">
+              <i class="ph-duotone ph-magnifying-glass"></i> Finder
+            </button>
+          </div>
+        </td>
+        <td style="padding: 10px; font-weight: 700; color: var(--accent-amber); font-family: var(--font-code);">${formatBytes(sz)}</td>
+        <td style="padding: 10px; color: var(--accent-emerald); font-size: 12px;"><i class="ph-duotone ph-shield-check"></i> Move to Trash</td>
+      `;
+      previewTableBody.appendChild(tr);
+    });
+  }
+
   // 2. Render active junk strategies
   (caseData.strategies || []).forEach((strat) => {
     if (strat.enabled && strat.savingsBytes > 0) {
@@ -1344,7 +1506,7 @@ function renderDeletionPreview() {
       tr.style.borderBottom = '1px solid rgba(255, 255, 255, 0.06)';
       tr.innerHTML = `
         <td style="padding: 10px;"><span class="action-chip active delete"><i class="ph-duotone ph-broom"></i> PURGE STRATEGY</span></td>
-        <td title="${strat.name}" style="padding: 10px; font-weight: 600; color: var(--text-main);">${strat.name.replace(/[\u1F600-\u1F64F\u1F300-\u1F5FF\u1F680-\u1F6FF\u1F1E0-\u1F1FF]/g, '')} <div style="font-size: 11px; color: var(--text-muted);">${strat.desc || ''}</div></td>
+        <td title="${escapeHtml(strat.name)}" style="padding: 10px; font-weight: 600; color: var(--text-main);">${escapeHtml(strat.name.replace(/[\u1F600-\u1F64F\u1F300-\u1F5FF\u1F680-\u1F6FF\u1F1E0-\u1F1FF]/g, ''))} <div style="font-size: 11px; color: var(--text-muted);">${escapeHtml(strat.desc || '')}</div></td>
         <td style="padding: 10px; font-weight: 700; color: var(--accent-amber); font-family: var(--font-code);">${formatBytes(strat.savingsBytes)}</td>
         <td style="padding: 10px; color: var(--accent-emerald); font-size: 12px;"><i class="ph-duotone ph-shield-check"></i> Safe Reclaim</td>
       `;
@@ -1502,31 +1664,32 @@ window.openCategoryInspector = function(categoryName) {
         <tr>
           <td colspan="4" style="padding: 30px; text-align: center; color: var(--text-muted); font-family: var(--font-main);">
             <i class="ph-duotone ph-folder-notch" style="font-size: 28px; color: var(--text-dim); display: block; margin-bottom: 8px;"></i>
-            No files detected on real disk for <strong>${categoryName}</strong> in current audit path.
+            No files detected on real disk for <strong>${escapeHtml(categoryName)}</strong> in current audit path.
           </td>
         </tr>
       `;
     } else {
+      if (!caseData.flaggedItems) caseData.flaggedItems = new Set();
       items.forEach((item) => {
         const tr = document.createElement('tr');
         tr.style.borderBottom = '1px solid rgba(255, 255, 255, 0.08)';
-        const pathEscaped = item.path.replace(/'/g, "\\'");
+        const isFlagged = caseData.flaggedItems.has(item.path);
         tr.innerHTML = `
-          <td style="padding: 10px; color: var(--primary); font-weight: 700;">${item.type.replace(/[\u1F600-\u1F64F\u1F300-\u1F5FF\u1F680-\u1F6FF\u1F1E0-\u1F1FF]/g, '')}</td>
-          <td style="padding: 10px; font-family: var(--font-code); color: var(--text-main);" title="${item.path}">
-            <div style="font-weight: 600;">${item.path}</div>
+          <td style="padding: 10px; color: var(--primary); font-weight: 700;">${escapeHtml(item.type.replace(/[\u1F600-\u1F64F\u1F300-\u1F5FF\u1F680-\u1F6FF\u1F1E0-\u1F1FF]/g, ''))}</td>
+          <td style="padding: 10px; font-family: var(--font-code); color: var(--text-main);" title="${escapeHtml(item.path)}">
+            <div style="font-weight: 600;">${escapeHtml(item.path)}</div>
             <div style="font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; margin-top: 2px;">
-              <span>${item.source}</span>
+              <span>${escapeHtml(item.source)}</span>
               <span>•</span>
-              <button class="btn btn-secondary" style="padding: 2px 6px; font-size: 10px; display: inline-flex; align-items: center; gap: 3px;" onclick="revealInFinder('${pathEscaped}')" title="Reveal in macOS Finder">
+              <button class="btn btn-secondary" style="padding: 2px 6px; font-size: 10px; display: inline-flex; align-items: center; gap: 3px;" data-path="${escapeHtml(item.path)}" onclick="revealInFinder(this.dataset.path)" title="Reveal in macOS Finder">
                 <i class="ph-duotone ph-magnifying-glass"></i> Reveal in Finder
               </button>
             </div>
           </td>
-          <td style="padding: 10px; font-weight: 700; color: var(--accent-amber); font-family: var(--font-code);">${item.size}</td>
+          <td style="padding: 10px; font-weight: 700; color: var(--accent-amber); font-family: var(--font-code);">${escapeHtml(item.size)}</td>
           <td style="padding: 10px; text-align: right;">
-            <button class="btn btn-secondary" style="padding: 4px 10px; font-size: 11.5px;" onclick="flagInspectorItem('${pathEscaped}')">
-              <i class="ph-duotone ph-flag"></i> Flag
+            <button class="btn ${isFlagged ? 'btn-primary' : 'btn-secondary'}" style="padding: 4px 10px; font-size: 11.5px;" data-path="${escapeHtml(item.path)}" onclick="flagInspectorItem(this.dataset.path, this)">
+              <i class="ph-duotone ${isFlagged ? 'ph-check-circle' : 'ph-flag'}"></i> ${isFlagged ? 'Flagged' : 'Flag'}
             </button>
           </td>
         `;
@@ -1538,8 +1701,26 @@ window.openCategoryInspector = function(categoryName) {
   openModal('modalCategoryInspector');
 };
 
-window.flagInspectorItem = function(path) {
-  showToast(`Added to review: ${path}`, 'success');
+window.flagInspectorItem = function(path, btnEl) {
+  if (!caseData.flaggedItems) caseData.flaggedItems = new Set();
+  const isFlagged = caseData.flaggedItems.has(path);
+  const fname = path.split('/').pop() || path;
+  if (isFlagged) {
+    caseData.flaggedItems.delete(path);
+    showToast(`Removed from review: ${fname}`, 'info');
+    if (btnEl) {
+      btnEl.className = 'btn btn-secondary';
+      btnEl.innerHTML = '<i class="ph-duotone ph-flag"></i> Flag';
+    }
+  } else {
+    caseData.flaggedItems.add(path);
+    showToast(`Flagged for review: ${fname}`, 'success');
+    if (btnEl) {
+      btnEl.className = 'btn btn-primary';
+      btnEl.innerHTML = '<i class="ph-duotone ph-check-circle"></i> Flagged';
+    }
+  }
+  recalculateStats();
 };
 
 // Phase 5: Export JSON & CSV Reports
@@ -1830,6 +2011,7 @@ window.openStoryInspector = function(storyId) {
   const story = stories.find(s => s.id === storyId) || stories[0];
 
   if (!story) return;
+  currentInspectedStoryId = story.id;
 
   const modal = document.getElementById('modalStoryInspector');
   const title = document.getElementById('storyModalTitle');
@@ -1845,7 +2027,7 @@ window.openStoryInspector = function(storyId) {
   if (needProb) needProb.innerHTML = `Rule-based review score: <span style="color: var(--accent-emerald); font-weight: 700;">${story.confidence || 0}/100</span>`;
 
   if (whyList) {
-    whyList.innerHTML = (story.why || []).map(w => `<span style="background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.3); padding: 4px 10px; border-radius: 12px;"><i class="ph-duotone ph-check-circle" style="color: #a855f7;"></i> ${w.replace(/^✔\s*/, '')}</span>`).join('');
+    whyList.innerHTML = (story.why || []).map(w => `<span style="background: rgba(168, 85, 247, 0.15); border: 1px solid rgba(168, 85, 247, 0.3); padding: 4px 10px; border-radius: 12px;"><i class="ph-duotone ph-check-circle" style="color: #a855f7;"></i> ${escapeHtml(w.replace(/^✔\s*/, ''))}</span>`).join('');
   }
 
   if (tbody) {
@@ -1865,24 +2047,25 @@ window.openStoryInspector = function(storyId) {
       const tr = document.createElement('tr');
       tr.style.borderBottom = '1px solid var(--glass-border)';
 
-      const recAction = story.recommendedAction || 'trash';
-      const pathEscaped = item.path.replace(/'/g, "\\'");
+      const recAction = item.action || story.recommendedAction || 'trash';
+      const isSelected = item.selected !== false;
+      const folderScope = item.path.substring(0, item.path.lastIndexOf('/')) || '/';
 
       tr.innerHTML = `
         <td style="padding: 10px 8px; font-weight: 600;">
           <div style="display: flex; align-items: center; gap: 8px;">
             <i class="ph-duotone ph-file-code" style="color: var(--primary);"></i>
-            <span>${item.name}</span>
+            <span>${escapeHtml(item.name)}</span>
           </div>
         </td>
-        <td style="padding: 10px 8px; font-family: var(--font-code); color: var(--text-muted); word-break: break-all;" title="${item.path}">
+        <td style="padding: 10px 8px; font-family: var(--font-code); color: var(--text-muted); word-break: break-all;" title="${escapeHtml(item.path)}">
           <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-            <span style="font-size: 11.5px;">${item.path}</span>
+            <span style="font-size: 11.5px;">${escapeHtml(item.path)}</span>
             <div style="display: flex; gap: 4px; shrink: 0;">
-              <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 10.5px;" onclick="closeModal('modalStoryInspector'); navigateToPathScope('${pathEscaped.substring(0, pathEscaped.lastIndexOf('/')) || '/' }')" title="Set scope anchor to this folder and rescan">
+              <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 10.5px;" data-scope="${escapeHtml(folderScope)}" onclick="closeModal('modalStoryInspector'); navigateToPathScope(this.dataset.scope)" title="Set scope anchor to this folder and rescan">
                 <i class="ph-duotone ph-compass"></i> Scope
               </button>
-              <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 10.5px;" onclick="revealInFinder('${pathEscaped}')" title="Reveal in macOS Finder">
+              <button class="btn btn-secondary" style="padding: 3px 8px; font-size: 10.5px;" data-path="${escapeHtml(item.path)}" onclick="revealInFinder(this.dataset.path)" title="Reveal in macOS Finder">
                 <i class="ph-duotone ph-magnifying-glass"></i> Finder
               </button>
             </div>
@@ -1893,7 +2076,7 @@ window.openStoryInspector = function(storyId) {
         </td>
         <td style="padding: 10px 8px; text-align: right;">
           <div class="action-selector" style="justify-content: flex-end;">
-            <button class="action-chip ${recAction === 'trash' ? 'active delete' : 'delete'}" id="chip-del-${idx}" onclick="selectStoryItemAction('${pathEscaped}', 'trash', 'chip-del-${idx}', '${idx}')">
+            <button class="action-chip ${isSelected && recAction === 'trash' ? 'active delete' : 'delete'}" id="chip-del-${idx}" data-path="${escapeHtml(item.path)}" data-idx="${idx}" onclick="selectStoryItemAction(this.dataset.path, 'trash', 'chip-del-${idx}', this.dataset.idx)">
               <i class="ph-duotone ph-trash"></i> Move to Trash
             </button>
           </div>
@@ -1907,20 +2090,26 @@ window.openStoryInspector = function(storyId) {
 };
 
 window.selectStoryItemAction = function(path, action, chipId, idx) {
-  const rowDel = document.getElementById(`chip-del-${idx}`);
-  const rowComp = document.getElementById(`chip-comp-${idx}`);
-  const rowArch = document.getElementById(`chip-arch-${idx}`);
-
-  if (rowDel) rowDel.className = 'action-chip delete';
-  if (rowComp) rowComp.className = 'action-chip compress';
-  if (rowArch) rowArch.className = 'action-chip archive';
-
-  const selectedBtn = document.getElementById(chipId);
-  if (selectedBtn) {
-    selectedBtn.className = `action-chip active ${action}`;
+  const story = (caseData.archaeologistStories || []).find(s => s.id === currentInspectedStoryId);
+  if (story && Array.isArray(story.items)) {
+    const item = story.items.find(i => i.path === path) || story.items[Number(idx)];
+    if (item) {
+      item.action = action;
+      item.selected = (action !== 'none');
+    }
   }
 
-  showToast(`Action '${action.toUpperCase()}' selected for ${path.split('/').pop()}`, 'info');
+  const rowDel = document.getElementById(`chip-del-${idx}`);
+  if (rowDel) {
+    if (action === 'trash') {
+      rowDel.className = 'action-chip active delete';
+    } else {
+      rowDel.className = 'action-chip delete';
+    }
+  }
+
+  const fname = path.split('/').pop() || path;
+  showToast(`Action '${action.toUpperCase()}' selected for ${fname}`, 'info');
 };
 
 function renderPathAssistantHUD() {

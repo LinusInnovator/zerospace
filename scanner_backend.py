@@ -594,7 +594,7 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
                     executed_log.append("REJECTED: Arbitrary shell command execution disabled for security hardening.")
                     continue
 
-                if action in {'compress', 'transparent_compress', 'migrate', 'apfs_thin_snapshots', 'strategy'} and os.environ.get('ZEROSPACE_ENABLE_ADVANCED_ACTIONS') != '1':
+                if action in {'compress', 'transparent_compress', 'migrate', 'apfs_thin_snapshots'} and os.environ.get('ZEROSPACE_ENABLE_ADVANCED_ACTIONS') != '1':
                     executed_log.append(f"BLOCKED: Advanced action '{action}' is disabled in review-first mode")
                     continue
 
@@ -706,18 +706,53 @@ class RealHDScannerBackend(SimpleHTTPRequestHandler):
                         executed_log.append(f"STRATEGY BLOCKED: {msg}")
                         continue
 
-                    if os.path.exists(target_dir) and os.path.isdir(target_dir):
+                    target_pattern = item.get('targetPattern')
+                    if os.path.exists(target_dir):
                         try:
                             purged_items_count = 0
-                            for child in os.listdir(target_dir):
-                                child_path = os.path.join(target_dir, child)
-                                if os.path.isfile(child_path) or os.path.islink(child_path):
-                                    os.remove(child_path)
-                                    purged_items_count += 1
-                                elif os.path.isdir(child_path):
-                                    shutil.rmtree(child_path)
-                                    purged_items_count += 1
-                            executed_log.append(f"Hardened Strategy Purged {purged_items_count} items in {target_dir}")
+                            purged_bytes = 0
+                            if target_pattern == 'node_modules':
+                                for r, dirs, _ in os.walk(target_dir, topdown=True):
+                                    if 'node_modules' in dirs:
+                                        nm_path = os.path.join(r, 'node_modules')
+                                        if os.path.isdir(nm_path) and not os.path.islink(nm_path):
+                                            purged_bytes += safe_dir_size(nm_path)
+                                            shutil.rmtree(nm_path, ignore_errors=True)
+                                            purged_items_count += 1
+                                        dirs.remove('node_modules')
+                            elif target_pattern == '__pycache__':
+                                for r, dirs, _ in os.walk(target_dir, topdown=True):
+                                    if '__pycache__' in dirs:
+                                        pc_path = os.path.join(r, '__pycache__')
+                                        if os.path.isdir(pc_path) and not os.path.islink(pc_path):
+                                            purged_bytes += safe_dir_size(pc_path)
+                                            shutil.rmtree(pc_path, ignore_errors=True)
+                                            purged_items_count += 1
+                                        dirs.remove('__pycache__')
+                            elif target_pattern == '.DS_Store':
+                                for r, _, files in os.walk(target_dir):
+                                    if '.DS_Store' in files:
+                                        ds_path = os.path.join(r, '.DS_Store')
+                                        if os.path.isfile(ds_path) or os.path.islink(ds_path):
+                                            purged_bytes += safe_getsize(ds_path)
+                                            try:
+                                                os.remove(ds_path)
+                                                purged_items_count += 1
+                                            except OSError:
+                                                pass
+                            elif os.path.isdir(target_dir):
+                                for child in os.listdir(target_dir):
+                                    child_path = os.path.join(target_dir, child)
+                                    if os.path.isfile(child_path) or os.path.islink(child_path):
+                                        purged_bytes += safe_getsize(child_path)
+                                        os.remove(child_path)
+                                        purged_items_count += 1
+                                    elif os.path.isdir(child_path):
+                                        purged_bytes += safe_dir_size(child_path)
+                                        shutil.rmtree(child_path, ignore_errors=True)
+                                        purged_items_count += 1
+                            reclaimed_bytes += purged_bytes
+                            executed_log.append(f"Hardened Strategy Purged {purged_items_count} items in {target_dir} (Reclaimed {format_bytes_py(purged_bytes)})")
                         except Exception as ex:
                             executed_log.append(f"Hardened Strategy Error: {ex}")
 
@@ -839,12 +874,14 @@ def get_fast_header_hash(filepath):
     except Exception:
         return None
 
-def get_file_sha256(filepath):
-    """Calculates SHA-256 hash of file."""
+def get_file_sha256(filepath, scan_id=None):
+    """Calculates SHA-256 hash of file, aborting early if scan is cancelled."""
     try:
         hasher = hashlib.sha256()
         with open(filepath, 'rb') as f:
             while chunk := f.read(65536):
+                if scan_id and scan_is_cancelled(scan_id):
+                    return None
                 hasher.update(chunk)
         return hasher.hexdigest()
     except Exception:
@@ -1133,26 +1170,6 @@ def build_archaeologist_narrative_stories(scanned_items, hogs, duplicates, root_
     return [story for story in stories if story.get('itemCount', 0) > 0]
 
 
-def query_apfs_spotlight_indexed_files(root_dir):
-    """Engine A: APFS Native Spotlight B-Tree Indexing Engine.
-    Executes in ~0.05 seconds by querying macOS pre-indexed APFS kernel metadata!
-    """
-    if sys.platform != 'darwin':
-        return None
-
-    try:
-        # Query Spotlight B-Tree metadata for target extensions & folders
-        query_str = "kMDItemFSName == '*.safetensors' || kMDItemFSName == '*.ckpt' || kMDItemFSName == '*.vmdk' || kMDItemFSName == '*.iso' || kMDItemFSName == 'node_modules' || kMDItemFSName == '__pycache__' || kMDItemFSName == '*.mp4' || kMDItemFSName == '*.mov' || kMDItemFSName == '*.tar.gz' || kMDItemFSName == '*.zip' || kMDItemFSName == '.DS_Store'"
-        cmd = ["mdfind", "-onlyin", root_dir, query_str]
-        res = subprocess.run(cmd, capture_output=True, text=True, timeout=3.0)
-        if res.returncode == 0 and res.stdout.strip():
-            paths = [p.strip() for p in res.stdout.split('\n') if p.strip()]
-            return paths
-    except Exception as e:
-        print(f"⚡ APFS Spotlight fallback to parallel worker pool: {e}")
-    return None
-
-
 def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False, full_refresh=False):
     """Exhaustively enumerate accessible files with a durable incremental inventory."""
     total_files = 0
@@ -1435,7 +1452,7 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False, full_ref
                         (size, header_hash)
                     )
                     for path, mtime, cached_sha in rows:
-                        sha = cached_sha or get_file_sha256(path)
+                        sha = cached_sha or get_file_sha256(path, scan_id=scan_id)
                         exact_hashed_files += 1
                         if sha:
                             exact_rows.append((size, sha, path, mtime))
@@ -1562,12 +1579,14 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False, full_ref
             "name": "Clean Real node_modules Directories",
             "category": "dev",
             "desc": f"Found active node_modules on real disk in {root_dir}.",
+            "targetDir": root_dir,
+            "targetPattern": "node_modules",
             "command": f"find '{root_dir}' -name 'node_modules' -type d -prune -exec rm -rf {{}} +",
             "savingsBytes": node_modules_bytes,
             "safety": "safe",
             "confidence": "99% High",
             "enabled": True,
-            "action": "delete"
+            "action": "strategy"
         })
 
     if pycache_bytes > 0:
@@ -1576,12 +1595,14 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False, full_ref
             "name": "Real Python __pycache__ Bytecode",
             "category": "dev",
             "desc": "Found compiled .pyc bytecode files.",
+            "targetDir": root_dir,
+            "targetPattern": "__pycache__",
             "command": f"find '{root_dir}' -type d -name '__pycache__' -exec rm -r {{}} +",
             "savingsBytes": pycache_bytes,
             "safety": "safe",
             "confidence": "99% High",
             "enabled": True,
-            "action": "delete"
+            "action": "strategy"
         })
 
     if ds_store_bytes > 0:
@@ -1590,12 +1611,14 @@ def run_real_hd_audit(root_dir, scan_id=None, scan_global_caches=False, full_ref
             "name": "Purge Real .DS_Store Clutter",
             "category": "system",
             "desc": "Discovered macOS directory thumbnail files.",
+            "targetDir": root_dir,
+            "targetPattern": ".DS_Store",
             "command": f"find '{root_dir}' -name '.DS_Store' -type f -delete",
             "savingsBytes": ds_store_bytes,
             "safety": "safe",
             "confidence": "99% High",
             "enabled": True,
-            "action": "delete"
+            "action": "strategy"
         })
 
     xcode_derived_data = os.path.expanduser('~/Library/Developer/Xcode/DerivedData')

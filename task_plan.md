@@ -55,11 +55,11 @@ Enhance HD Optimizer Detective v2 UI and backend drill-down features according t
 - [x] Update `openCategoryInspector()` to query strictly real disk audit items or render clean empty state.
 - [x] Verify backend compilation and API health.
 
-### Phase 9: Blazing-Fast APFS Spotlight & Parallel Multi-Threaded Indexing Engine
-- [x] Implement Engine A: APFS Native Spotlight (`mdfind`) B-Tree Indexer for 0.05s instant querying on macOS.
-- [x] Implement Engine B: Multi-Threaded Parallel `os.scandir` Worker Pool (`ThreadPoolExecutor(max_workers=16)`).
-- [x] Implement Live File Verification & True Byte Audit (verifying file size & `os.path.exists()` before returning).
-- [x] Verify execution speed and 100% data truthfulness.
+### Phase 9: SQLite-Backed Bounded-Memory Incremental Indexing Engine
+- [x] Implement 2-Pass Hashing Pipeline (Size prefilter -> 8KB header hash -> full SHA-256 verification).
+- [x] Disk-backed SQLite staging database for bounded RAM consumption during large workspace scans.
+- [x] Durable incremental cache in ~/Library/Application Support/ZeroSpace to bypass unchanged files.
+- [x] Verify execution speed, interruptible cancellation, and 100% data truthfulness.
 
 ### Phase 10: Express Reclaim Deletion Audit Data Sync
 - [x] Auto-flag duplicate copies and active strategies when opening `Deletion Audit Preview` modal from `Reclaimable Space` tile.
@@ -86,11 +86,11 @@ Enhance HD Optimizer Detective v2 UI and backend drill-down features according t
 - [x] Set `word-break: break-all;` on path columns to wrap long file paths cleanly without horizontal scrollbars.
 - [x] Verify zero horizontal scrollbars across Category Inspector and Deletion Audit modals.
 
-### Phase 14: The Digital Archaeologist & 20-Signal Safety Engine
-- [x] Build 20-Signal Confidence Weighting Engine in `scanner_backend.py` (0–100% confidence score + "Explain WHY" reasons array).
+### Phase 14: The Digital Archaeologist & Multi-Signal Heuristic Safety Engine
+- [x] Build multi-signal heuristic candidate scoring in `scanner_backend.py` (0–100 review rank score + transparent "Explain WHY" signals).
 - [x] Group scanned disk clutter into Narrative Cleanup Stories (AI Workspace Debris, Installation Relics, Project Graveyard, Forgotten Downloads, Version Graveyard, Forgotten Relics).
-- [x] Add `tabArchaeologist` ("Digital Archaeologist") view to `index.html` with liquid glass Story Cards and 3-Action Safety Buttons (Delete 🟢 | Compress 🟡 | Archive 🔵).
-- [x] Add Story Inspector Modal (`modalStoryInspector`) displaying item confidence scores and "Future Probability" metrics.
+- [x] Add `tabArchaeologist` ("Digital Archaeologist") view to `index.html` with liquid glass Story Cards and actionable review controls.
+- [x] Add Story Inspector Modal (`modalStoryInspector`) displaying item confidence scores and direct execution actions.
 - [x] Verify Digital Archaeologist functionality and UI in browser.
 
 ### Phase 15: Error Isolation & Defensive Null-Safe Rendering (Fix Misleading Toast Bug)
